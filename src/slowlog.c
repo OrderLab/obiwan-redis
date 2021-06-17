@@ -41,6 +41,8 @@
 
 #include "server.h"
 #include "slowlog.h"
+#include "orbit.h"
+#include <assert.h>
 
 /* Create a new slowlog entry.
  * Incrementing the ref count of all the objects retained is up to
@@ -62,6 +64,8 @@ slowlogEntry *slowlogCreateEntry(client *c, robj **argv, int argc, long long dur
                 argc-slargc+1));
         } else {
             /* Trim too long strings as well... */
+            fprintf(stderr, "argv %p\n", argv);
+            fprintf(stderr, "argv[j] %p\n", argv[j]);
             if (argv[j]->type == OBJ_STRING &&
                 sdsEncodedObject(argv[j]) &&
                 sdslen(argv[j]->ptr) > SLOWLOG_ENTRY_MAX_STRING)
@@ -72,16 +76,21 @@ slowlogEntry *slowlogCreateEntry(client *c, robj **argv, int argc, long long dur
                     (unsigned long)
                     sdslen(argv[j]->ptr) - SLOWLOG_ENTRY_MAX_STRING);
                 se->argv[j] = createObject(OBJ_STRING,s);
-            } else {
+            } else if (argv[j]->refcount == OBJ_SHARED_REFCOUNT) {
+                /* how will we have those? */
+                fprintf(stderr, "Getting shared obj\n");
                 se->argv[j] = argv[j];
-                incrRefCount(argv[j]);
+            } else {
+                /* Copy string object out of orbit pool.
+                 * FIXME: reduce one time of copy */
+                se->argv[j] = dupStringObject(argv[j]);
             }
         }
     }
     se->time = time(NULL);
     se->duration = duration;
     se->id = server.slowlog_entry_id++;
-    se->peerid = sdsnew(getClientPeerId(c));
+    se->peerid = sdsnew(c->peerid);
     se->cname = c->name ? sdsnew(c->name->ptr) : sdsempty();
     return se;
 }
@@ -94,6 +103,7 @@ void slowlogFreeEntry(void *septr) {
     slowlogEntry *se = septr;
     int j;
 
+    /* FIXME: free in orbit */
     for (j = 0; j < se->argc; j++)
         decrRefCount(se->argv[j]);
     zfree(se->argv);
@@ -102,26 +112,66 @@ void slowlogFreeEntry(void *septr) {
     zfree(se);
 }
 
-/* Initialize the slow log. This function should be called a single time
- * at server startup. */
-void slowlogInit(void) {
+struct orbit_module *slowlog_orbit;
+/* Fix linking */
+extern struct orbit_pool *slowlog_pool;
+struct orbit_scratch slowlog_scratch;
+unsigned long slowlogPushEntry_orbit(void *store, void *args);
+
+void *slowlogInit_orbit(void) {
     server.slowlog = listCreate();
     server.slowlog_entry_id = 0;
     listSetFreeMethod(server.slowlog,slowlogFreeEntry);
+    return NULL;
+}
+
+/* Initialize the slow log. This function should be called a single time
+ * at server startup. */
+void slowlogInit(void) {
+    slowlog_pool = orbit_pool_create_at(1024 * 1024, (void*)0x820000000UL);
+    orbit_scratch_create(&slowlog_scratch, 1024 * 1024);
+    slowlog_orbit = orbit_create("slowlog", slowlogPushEntry_orbit, slowlogInit_orbit);
 }
 
 /* Push a new entry into the slow log.
  * This function will make sure to trim the slow log accordingly to the
  * configured max length. */
-void slowlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long duration) {
-    if (server.slowlog_log_slower_than < 0) return; /* Slowlog disabled */
-    if (duration >= server.slowlog_log_slower_than)
-        listAddNodeHead(server.slowlog,
-                        slowlogCreateEntry(c,argv,argc,duration));
-
+void slowlogPushEntry_real(client *c, robj **argv, int argc, long long duration) {
+    listAddNodeHead(server.slowlog, slowlogCreateEntry(c,argv,argc,duration));
     /* Remove old entries if needed. */
     while (listLength(server.slowlog) > server.slowlog_max_len)
         listDelNode(server.slowlog,listLast(server.slowlog));
+}
+
+typedef struct _slowlog_push_orbit_args {
+    client *c;
+    robj **argv;
+    int argc;
+    long long duration;
+} slowlog_push_orbit_args;
+
+unsigned long slowlogPushEntry_orbit(void *store, void *_args) {
+    (void)store;
+    slowlog_push_orbit_args *args = (slowlog_push_orbit_args*)_args;
+    slowlogPushEntry_real(args->c, args->argv, args->argc, args->duration);
+    return 0;
+}
+
+void slowlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long duration) {
+    if (server.slowlog_log_slower_than < 0) return; /* Slowlog disabled */
+    /* FIXME: this changes default behavior that trims slowlog entires every time */
+    if (!(duration >= server.slowlog_log_slower_than)) return;
+
+    fprintf(stderr, "In slowlog push\n");
+
+    // pre-get c->peerid
+    // can this be put into orbit?
+    getClientPeerId(c);
+
+    // slowlogPushEntryIfNeededReal(c, argv, argc, duration);
+    slowlog_push_orbit_args args = { c, argv, argc, duration, };
+    // orbit_call_async(slowlog_orbit, ORBIT_NORETVAL, 1, &slowlog_pool, &args, sizeof(args), NULL);
+    orbit_call_async(slowlog_orbit, ORBIT_NORETVAL, 1, &slowlog_pool, NULL, &args, sizeof(args), NULL);
 }
 
 /* Remove all the entries from the current slow log. */
@@ -130,14 +180,102 @@ void slowlogReset(void) {
         listDelNode(server.slowlog,listLast(server.slowlog));
 }
 
+typedef struct _slowlog_command_args {
+    int argc;
+    robj **argv;
+} slowlog_command_args;
+
+unsigned long slowlogCommand_orbit(void *store, void *_args) {
+    (void)store;
+    slowlog_command_args *c = (slowlog_command_args *)_args;
+
+    unsigned long ret = 0;
+
+    fprintf(stderr, "In slowlog query\n");
+
+    orbit_scratch_create(&slowlog_scratch, 1024 * 1024);
+
+    slowlog_pool = orbit_pool_from_scratch(&slowlog_scratch);
+
+    if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"reset")) {
+        slowlogReset();
+    } else if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"len")) {
+        long long *len = orbit_pool_alloc(slowlog_pool, sizeof(long long));
+        *len = listLength(server.slowlog);
+        ret = (unsigned long)len;
+    } else if ((c->argc == 2 || c->argc == 3) &&
+               !strcasecmp(c->argv[1]->ptr,"get"))
+    {
+        long count = 10;
+        listIter li;
+        listNode *ln;
+        slowlogEntry *se, *se_dup;
+
+        if (c->argc == 3 &&
+            getLongFromObject(c->argv[2],&count) != C_OK)
+            goto exit;
+
+        /* Duplicate slowlog list in the scratch. */
+        list *slowlog_dup = listCreate_orbit();
+
+        listRewind(server.slowlog,&li);
+        while(count-- && (ln = listNext(&li))) {
+            int j;
+
+            se = ln->value;
+            se_dup = orbit_pool_alloc(slowlog_pool, sizeof(*se_dup));
+
+            *se_dup = *se;
+            se_dup->argv = orbit_pool_alloc(slowlog_pool, sizeof(robj*)*se->argc);
+            for (j = 0; j < se->argc; j++)
+                se_dup->argv[j] = dupStringObject_orbit(se->argv[j]);
+            se_dup->peerid = sdsdup_orbit(se->peerid);
+            se_dup->cname = sdsdup_orbit(se->cname);
+
+            listAddNodeHead_orbit(slowlog_dup, se_dup);
+        }
+
+        ret = (unsigned long)slowlog_dup;
+    } else {
+        /* TODO: put error reply in orbit side? */
+    }
+
+exit:
+    orbit_pool_conclude_scratch(&slowlog_scratch, slowlog_pool);
+
+    orbit_sendv(&slowlog_scratch);
+
+    return ret;
+}
+
 /* The SLOWLOG command. Implements all the subcommands needed to handle the
  * Redis slow log. */
 void slowlogCommand(client *c) {
+    struct orbit_task task;
+    union orbit_result result;
+    union orbit_result retval;
+    int ret;
+
+    slowlog_command_args args = { c->argc, c->argv, };
+    orbit_call_async(slowlog_orbit, 0, 1, &slowlog_pool, slowlogCommand_orbit,
+                     &args, sizeof(args), &task);
+
+    ret = orbit_recvv(&result, &task);
+    fprintf(stderr, "orbit_recvv returns %d\n", ret);
+    assert(ret == 1);
+
+    ret = orbit_recvv(&retval, &task);
+    fprintf(stderr, "orbit_recvv returns %d\n", ret);
+    assert(ret == 0);
+
     if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"reset")) {
-        slowlogReset();
         addReply(c,shared.ok);
     } else if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"len")) {
-        addReplyLongLong(c,listLength(server.slowlog));
+        struct orbit_repr *len = orbit_scratch_first(&result.scratch);
+        fprintf(stderr, "len->type %d len->any.length %llu\n", len->type, len->any.length);
+        assert(len && len->type == ORBIT_ANY);
+        addReplyLongLong(c,*(long long*)retval.retval);
+        fprintf(stderr, "retval %llx %llx\n", retval.retval, len->any.data + 8);
     } else if ((c->argc == 2 || c->argc == 3) &&
                !strcasecmp(c->argv[1]->ptr,"get"))
     {
@@ -151,7 +289,12 @@ void slowlogCommand(client *c) {
             getLongFromObjectOrReply(c,c->argv[2],&count,NULL) != C_OK)
             return;
 
-        listRewind(server.slowlog,&li);
+        struct orbit_repr *slowlog_r = orbit_scratch_first(&result.scratch);
+        assert(slowlog_r->type == ORBIT_ANY);
+        list *slowlog = (list*)retval.retval;
+        fprintf(stderr, "retval %llx %llx\n", retval.retval, slowlog_r->any.data + 8);
+
+        listRewind(slowlog,&li);
         totentries = addDeferredMultiBulkLength(c);
         while(count-- && (ln = listNext(&li))) {
             int j;
@@ -173,4 +316,7 @@ void slowlogCommand(client *c) {
         addReplyError(c,
             "Unknown SLOWLOG subcommand or wrong # of args. Try GET, RESET, LEN.");
     }
+
+    /* TODO */
+    // orbit_scratch_free(slowlog_scratch);
 }

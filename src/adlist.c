@@ -32,17 +32,23 @@
 #include <stdlib.h>
 #include "adlist.h"
 #include "zmalloc.h"
+#include "orbit.h"
+
+/* FIXME: Fix linking */
+struct orbit_pool *slowlog_pool;
 
 /* Create a new list. The created list can be freed with
  * AlFreeList(), but private value of every node need to be freed
  * by the user before to call AlFreeList().
  *
  * On error, NULL is returned. Otherwise the pointer to the new list. */
-list *listCreate(void)
+list *listCreate_real(bool orbit)
 {
     struct list *list;
 
-    if ((list = zmalloc(sizeof(*list))) == NULL)
+    if (orbit && (list = orbit_pool_alloc(slowlog_pool, sizeof(*list))) == NULL)
+        return NULL;
+    if (!orbit && (list = zmalloc(sizeof(*list))) == NULL)
         return NULL;
     list->head = list->tail = NULL;
     list->len = 0;
@@ -50,6 +56,14 @@ list *listCreate(void)
     list->free = NULL;
     list->match = NULL;
     return list;
+}
+list *listCreate(void) {
+    return listCreate_real(false);
+}
+/* Note that this file is also used by `redis-cli', but listCreate_orbit
+ * should never be called. */
+list *listCreate_orbit(void) {
+    return listCreate_real(true);
 }
 
 /* Remove all the elements from the list without destroying the list itself. */
@@ -85,11 +99,13 @@ void listRelease(list *list)
  * On error, NULL is returned and no operation is performed (i.e. the
  * list remains unaltered).
  * On success the 'list' pointer you pass to the function is returned. */
-list *listAddNodeHead(list *list, void *value)
+list *listAddNodeHead_real(list *list, void *value, bool orbit)
 {
     listNode *node;
 
-    if ((node = zmalloc(sizeof(*node))) == NULL)
+    if (orbit && (node = orbit_pool_alloc(slowlog_pool, sizeof(*node))) == NULL)
+        return NULL;
+    if (!orbit && (node = zmalloc(sizeof(*node))) == NULL)
         return NULL;
     node->value = value;
     if (list->len == 0) {
@@ -103,6 +119,12 @@ list *listAddNodeHead(list *list, void *value)
     }
     list->len++;
     return list;
+}
+list *listAddNodeHead(list *list, void *value) {
+    return listAddNodeHead_real(list, value, false);
+}
+list *listAddNodeHead_orbit(list *list, void *value) {
+    return listAddNodeHead_real(list, value, true);
 }
 
 /* Add a new node to the list, to tail, containing the specified 'value'

@@ -28,6 +28,9 @@
  */
 
 #include "server.h"
+#include "orbit.h"
+
+extern struct orbit_pool *slowlog_pool;
 
 /* ================================ MULTI/EXEC ============================== */
 
@@ -47,7 +50,7 @@ void freeClientMultiState(client *c) {
 
         for (i = 0; i < mc->argc; i++)
             decrRefCount(mc->argv[i]);
-        zfree(mc->argv);
+        orbit_pool_free(slowlog_pool, mc->argv);
     }
     zfree(c->mstate.commands);
 }
@@ -62,7 +65,7 @@ void queueMultiCommand(client *c) {
     mc = c->mstate.commands+c->mstate.count;
     mc->cmd = c->cmd;
     mc->argc = c->argc;
-    mc->argv = zmalloc(sizeof(robj*)*c->argc);
+    mc->argv = orbit_pool_alloc(slowlog_pool, sizeof(robj*)*c->argc);
     memcpy(mc->argv,c->argv,sizeof(robj*)*c->argc);
     for (j = 0; j < c->argc; j++)
         incrRefCount(mc->argv[j]);
@@ -136,6 +139,8 @@ void execCommand(client *c) {
         discardTransaction(c);
         goto handle_monitor;
     }
+
+    fprintf(stderr, "is multi command\n");
 
     /* Exec all the queued commands */
     unwatchAllKeys(c); /* Unwatch ASAP otherwise we'll waste CPU cycles */

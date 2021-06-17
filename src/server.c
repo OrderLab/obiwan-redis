@@ -1973,7 +1973,6 @@ void initServer(void) {
     if (server.cluster_enabled) clusterInit();
     replicationScriptCacheInit();
     scriptingInit(1);
-    slowlogInit();
     latencyMonitorInit();
     bioInit();
     server.initial_memory_usage = zmalloc_used_memory();
@@ -3754,6 +3753,8 @@ int main(int argc, char **argv) {
     dictSetHashFunctionSeed((uint8_t*)hashseed);
     server.sentinel_mode = checkForSentinelMode(argc,argv);
     initServerConfig();
+    // init slowlog_pool before createClient(-1);
+    slowlogInit();
     moduleInitModulesSystem();
 
     /* Store the executable path and arguments in a safe place in order

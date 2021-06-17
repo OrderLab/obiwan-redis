@@ -31,6 +31,7 @@
 #include "server.h"
 #include <math.h>
 #include <ctype.h>
+#include "orbit.h"
 
 #ifdef __CYGWIN__
 #define strtold(a,b) ((long double)strtod((a),(b)))
@@ -38,9 +39,13 @@
 
 /* ===================== Creation and parsing of objects ==================== */
 
-robj *createObject(int type, void *ptr) {
-    robj *o = zmalloc(sizeof(*o));
+extern struct orbit_pool *slowlog_pool;
+
+robj *createObject_real(int type, void *ptr, bool orbit) {
+    robj *o = orbit ? orbit_pool_alloc(slowlog_pool, sizeof(*o))
+                    : zmalloc(sizeof(*o));
     o->type = type;
+    o->orbit = orbit;
     o->encoding = OBJ_ENCODING_RAW;
     o->ptr = ptr;
     o->refcount = 1;
@@ -53,6 +58,12 @@ robj *createObject(int type, void *ptr) {
         o->lru = LRU_CLOCK();
     }
     return o;
+}
+robj *createObject(int type, void *ptr) {
+    return createObject_real(type, ptr, false);
+}
+robj *createObject_orbit(int type, void *ptr) {
+    return createObject_real(type, ptr, true);
 }
 
 /* Set a special refcount in the object to make it "shared":
@@ -77,15 +88,23 @@ robj *makeObjectShared(robj *o) {
 robj *createRawStringObject(const char *ptr, size_t len) {
     return createObject(OBJ_STRING, sdsnewlen(ptr,len));
 }
+robj *createRawStringObject_orbit(const char *ptr, size_t len) {
+    return createObject_orbit(OBJ_STRING, sdsnewlen_orbit(ptr,len));
+}
 
 /* Create a string object with encoding OBJ_ENCODING_EMBSTR, that is
  * an object where the sds string is actually an unmodifiable string
  * allocated in the same chunk as the object itself. */
-robj *createEmbeddedStringObject(const char *ptr, size_t len) {
-    robj *o = zmalloc(sizeof(robj)+sizeof(struct sdshdr8)+len+1);
-    struct sdshdr8 *sh = (void*)(o+1);
+robj *createEmbeddedStringObject_real(const char *ptr, size_t len, bool orbit) {
+    robj *o;
+    struct sdshdr8 *sh;
+    size_t size = sizeof(robj)+sizeof(struct sdshdr8)+len+1;
+
+    o = orbit ? orbit_pool_alloc(slowlog_pool, size) : zmalloc(size);
+    sh = (void*)(o+1);
 
     o->type = OBJ_STRING;
+    o->orbit = orbit;
     o->encoding = OBJ_ENCODING_EMBSTR;
     o->ptr = sh+1;
     o->refcount = 1;
@@ -106,6 +125,12 @@ robj *createEmbeddedStringObject(const char *ptr, size_t len) {
     }
     return o;
 }
+robj *createEmbeddedStringObject(const char *ptr, size_t len) {
+    return createEmbeddedStringObject_real(ptr, len, false);
+}
+robj *createEmbeddedStringObject_orbit(const char *ptr, size_t len) {
+    return createEmbeddedStringObject_real(ptr, len, true);
+}
 
 /* Create a string object with EMBSTR encoding if it is smaller than
  * OBJ_ENCODING_EMBSTR_SIZE_LIMIT, otherwise the RAW encoding is
@@ -119,6 +144,12 @@ robj *createStringObject(const char *ptr, size_t len) {
         return createEmbeddedStringObject(ptr,len);
     else
         return createRawStringObject(ptr,len);
+}
+robj *createStringObject_orbit(const char *ptr, size_t len) {
+    if (len <= OBJ_ENCODING_EMBSTR_SIZE_LIMIT)
+        return createEmbeddedStringObject_orbit(ptr,len);
+    else
+        return createRawStringObject_orbit(ptr,len);
 }
 
 robj *createStringObjectFromLongLong(long long value) {
@@ -170,6 +201,26 @@ robj *dupStringObject(const robj *o) {
         return createEmbeddedStringObject(o->ptr,sdslen(o->ptr));
     case OBJ_ENCODING_INT:
         d = createObject(OBJ_STRING, NULL);
+        d->encoding = OBJ_ENCODING_INT;
+        d->ptr = o->ptr;
+        return d;
+    default:
+        serverPanic("Wrong encoding.");
+        break;
+    }
+}
+robj *dupStringObject_orbit(const robj *o) {
+    robj *d;
+
+    serverAssert(o->type == OBJ_STRING);
+
+    switch(o->encoding) {
+    case OBJ_ENCODING_RAW:
+        return createRawStringObject_orbit(o->ptr,sdslen(o->ptr));
+    case OBJ_ENCODING_EMBSTR:
+        return createEmbeddedStringObject_orbit(o->ptr,sdslen(o->ptr));
+    case OBJ_ENCODING_INT:
+        d = createObject_orbit(OBJ_STRING, NULL);
         d->encoding = OBJ_ENCODING_INT;
         d->ptr = o->ptr;
         return d;
@@ -318,7 +369,10 @@ void decrRefCount(robj *o) {
         case OBJ_MODULE: freeModuleObject(o); break;
         default: serverPanic("Unknown object type"); break;
         }
-        zfree(o);
+        if (o->orbit)
+            orbit_pool_free(slowlog_pool, o);
+        else
+            zfree(o);
     } else {
         if (o->refcount <= 0) serverPanic("decrRefCount against refcount <= 0");
         if (o->refcount != OBJ_SHARED_REFCOUNT) o->refcount--;
@@ -647,6 +701,16 @@ int getLongLongFromObject(robj *o, long long *target) {
         }
     }
     if (target) *target = value;
+    return C_OK;
+}
+
+int getLongFromObject(robj *o, long *target) {
+    long long value;
+
+    if (getLongLongFromObject(o, &value) != C_OK) return C_ERR;
+    if (value < LONG_MIN || value > LONG_MAX)
+        return C_ERR;
+    *target = value;
     return C_OK;
 }
 

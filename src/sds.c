@@ -38,6 +38,9 @@
 #include <limits.h>
 #include "sds.h"
 #include "sdsalloc.h"
+#include "orbit.h"
+
+extern struct orbit_pool *slowlog_pool;
 
 static inline int sdsHdrSize(char type) {
     switch(type&SDS_TYPE_MASK) {
@@ -81,7 +84,7 @@ static inline char sdsReqType(size_t string_size) {
  * You can print the string with printf() as there is an implicit \0 at the
  * end of the string. However the string is binary safe and can contain
  * \0 characters in the middle, as the length is stored in the sds header. */
-sds sdsnewlen(const void *init, size_t initlen) {
+sds sdsnewlen_real(const void *init, size_t initlen, bool orbit) {
     void *sh;
     sds s;
     char type = sdsReqType(initlen);
@@ -91,7 +94,10 @@ sds sdsnewlen(const void *init, size_t initlen) {
     int hdrlen = sdsHdrSize(type);
     unsigned char *fp; /* flags pointer. */
 
-    sh = s_malloc(hdrlen+initlen+1);
+    if (orbit)
+        sh = orbit_pool_alloc(slowlog_pool, hdrlen+initlen+1);
+    else
+        sh = s_malloc(hdrlen+initlen+1);
     if (!init)
         memset(sh, 0, hdrlen+initlen+1);
     if (sh == NULL) return NULL;
@@ -136,11 +142,20 @@ sds sdsnewlen(const void *init, size_t initlen) {
     s[initlen] = '\0';
     return s;
 }
+sds sdsnewlen_orbit(const void *init, size_t initlen) {
+    return sdsnewlen_real(init, initlen, true);
+}
+sds sdsnewlen(const void *init, size_t initlen) {
+    return sdsnewlen_real(init, initlen, false);
+}
 
 /* Create an empty (zero length) sds string. Even in this case the string
  * always has an implicit null term. */
 sds sdsempty(void) {
     return sdsnewlen("",0);
+}
+sds sdsempty_orbit(void) {
+    return sdsnewlen_orbit("",0);
 }
 
 /* Create a new sds string starting from a null terminated C string. */
@@ -148,16 +163,27 @@ sds sdsnew(const char *init) {
     size_t initlen = (init == NULL) ? 0 : strlen(init);
     return sdsnewlen(init, initlen);
 }
+sds sdsnew_orbit(const char *init) {
+    size_t initlen = (init == NULL) ? 0 : strlen(init);
+    return sdsnewlen_orbit(init, initlen);
+}
 
 /* Duplicate an sds string. */
 sds sdsdup(const sds s) {
     return sdsnewlen(s, sdslen(s));
+}
+sds sdsdup_orbit(const sds s) {
+    return sdsnewlen_orbit(s, sdslen(s));
 }
 
 /* Free an sds string. No operation is performed if 's' is NULL. */
 void sdsfree(sds s) {
     if (s == NULL) return;
     s_free((char*)s-sdsHdrSize(s[-1]));
+}
+void sdsfree_orbit(sds s) {
+    if (s == NULL) return;
+    orbit_pool_free(slowlog_pool, (char*)s-sdsHdrSize(s[-1]));
 }
 
 /* Set the sds string length to the length as obtained with strlen(), so
@@ -194,7 +220,7 @@ void sdsclear(sds s) {
  *
  * Note: this does not change the *length* of the sds string as returned
  * by sdslen(), but only the free buffer space we have. */
-sds sdsMakeRoomFor(sds s, size_t addlen) {
+sds sdsMakeRoomFor_real(sds s, size_t addlen, bool orbit) {
     void *sh, *newsh;
     size_t avail = sdsavail(s);
     size_t len, newlen;
@@ -221,22 +247,37 @@ sds sdsMakeRoomFor(sds s, size_t addlen) {
 
     hdrlen = sdsHdrSize(type);
     if (oldtype==type) {
-        newsh = s_realloc(sh, hdrlen+newlen+1);
+        if (orbit)
+            newsh = orbit_pool_realloc(slowlog_pool, sh, hdrlen+newlen+1);
+        else
+            newsh = s_realloc(sh, hdrlen+newlen+1);
         if (newsh == NULL) return NULL;
         s = (char*)newsh+hdrlen;
     } else {
         /* Since the header size changes, need to move the string forward,
          * and can't use realloc */
-        newsh = s_malloc(hdrlen+newlen+1);
+        if (orbit)
+            newsh = orbit_pool_alloc(slowlog_pool, hdrlen+newlen+1);
+        else
+            newsh = s_malloc(hdrlen+newlen+1);
         if (newsh == NULL) return NULL;
         memcpy((char*)newsh+hdrlen, s, len+1);
-        s_free(sh);
+        if (orbit)
+            orbit_pool_free(slowlog_pool, sh);
+        else
+            s_free(sh);
         s = (char*)newsh+hdrlen;
         s[-1] = type;
         sdssetlen(s, len);
     }
     sdssetalloc(s, newlen);
     return s;
+}
+sds sdsMakeRoomFor_orbit(sds s, size_t addlen) {
+    return sdsMakeRoomFor_real(s, addlen, true);
+}
+sds sdsMakeRoomFor(sds s, size_t addlen) {
+    return sdsMakeRoomFor_real(s, addlen, false);
 }
 
 /* Reallocate the sds string so that it has no free space at the end. The
@@ -383,15 +424,24 @@ sds sdsgrowzero(sds s, size_t len) {
  *
  * After the call, the passed sds string is no longer valid and all the
  * references must be substituted with the new pointer returned by the call. */
-sds sdscatlen(sds s, const void *t, size_t len) {
+sds sdscatlen_real(sds s, const void *t, size_t len, bool orbit) {
     size_t curlen = sdslen(s);
 
-    s = sdsMakeRoomFor(s,len);
+    if (orbit)
+        s = sdsMakeRoomFor_orbit(s,len);
+    else
+        s = sdsMakeRoomFor(s,len);
     if (s == NULL) return NULL;
     memcpy(s+curlen, t, len);
     sdssetlen(s, curlen+len);
     s[curlen+len] = '\0';
     return s;
+}
+sds sdscatlen(sds s, const void *t, size_t len) {
+    return sdscatlen_real(s, t, len, false);
+}
+sds sdscatlen_orbit(sds s, const void *t, size_t len) {
+    return sdscatlen_real(s, t, len, true);
 }
 
 /* Append the specified null termianted C string to the sds string 's'.
@@ -941,7 +991,7 @@ int hex_digit_to_int(char c) {
  * quotes or closed quotes followed by non space characters
  * as in: "foo"bar or "foo'
  */
-sds *sdssplitargs(const char *line, int *argc) {
+sds *sdssplitargs_real(const char *line, int *argc, bool orbit) {
     const char *p = line;
     char *current = NULL;
     char **vector = NULL;
@@ -956,7 +1006,8 @@ sds *sdssplitargs(const char *line, int *argc) {
             int insq=0; /* set to 1 if we are in 'single quotes' */
             int done=0;
 
-            if (current == NULL) current = sdsempty();
+            if (current == NULL)
+                current = orbit ? sdsempty_orbit() : sdsempty();
             while(!done) {
                 if (inq) {
                     if (*p == '\\' && *(p+1) == 'x' &&
@@ -967,7 +1018,8 @@ sds *sdssplitargs(const char *line, int *argc) {
 
                         byte = (hex_digit_to_int(*(p+2))*16)+
                                 hex_digit_to_int(*(p+3));
-                        current = sdscatlen(current,(char*)&byte,1);
+                        current = orbit ? sdscatlen_orbit(current,(char*)&byte,1)
+                                        : sdscatlen(current,(char*)&byte,1);
                         p += 3;
                     } else if (*p == '\\' && *(p+1)) {
                         char c;
@@ -981,7 +1033,8 @@ sds *sdssplitargs(const char *line, int *argc) {
                         case 'a': c = '\a'; break;
                         default: c = *p; break;
                         }
-                        current = sdscatlen(current,&c,1);
+                        current = orbit ? sdscatlen_orbit(current,&c,1)
+                                        : sdscatlen(current,&c,1);
                     } else if (*p == '"') {
                         /* closing quote must be followed by a space or
                          * nothing at all. */
@@ -991,12 +1044,14 @@ sds *sdssplitargs(const char *line, int *argc) {
                         /* unterminated quotes */
                         goto err;
                     } else {
-                        current = sdscatlen(current,p,1);
+                        current = orbit ? sdscatlen_orbit(current,p,1)
+                                        : sdscatlen(current,p,1);
                     }
                 } else if (insq) {
                     if (*p == '\\' && *(p+1) == '\'') {
                         p++;
-                        current = sdscatlen(current,"'",1);
+                        current = orbit ? sdscatlen_orbit(current,"'",1)
+                                        : sdscatlen(current,"'",1);
                     } else if (*p == '\'') {
                         /* closing quote must be followed by a space or
                          * nothing at all. */
@@ -1006,7 +1061,8 @@ sds *sdssplitargs(const char *line, int *argc) {
                         /* unterminated quotes */
                         goto err;
                     } else {
-                        current = sdscatlen(current,p,1);
+                        current = orbit ? sdscatlen_orbit(current,p,1)
+                                        : sdscatlen(current,p,1);
                     }
                 } else {
                     switch(*p) {
@@ -1024,32 +1080,51 @@ sds *sdssplitargs(const char *line, int *argc) {
                         insq=1;
                         break;
                     default:
-                        current = sdscatlen(current,p,1);
+                        current = orbit ? sdscatlen_orbit(current,p,1)
+                                        : sdscatlen(current,p,1);
                         break;
                     }
                 }
                 if (*p) p++;
             }
             /* add the token to the vector */
-            vector = s_realloc(vector,((*argc)+1)*sizeof(char*));
+            size_t size = ((*argc)+1)*sizeof(char*);
+            vector = orbit ? orbit_pool_realloc(slowlog_pool, vector, size)
+                           : s_realloc(vector,size);
             vector[*argc] = current;
             (*argc)++;
             current = NULL;
         } else {
             /* Even on empty input string return something not NULL. */
-            if (vector == NULL) vector = s_malloc(sizeof(void*));
+            if (vector == NULL)
+                vector = orbit ? orbit_pool_alloc(slowlog_pool, sizeof(void*))
+                               : s_malloc(sizeof(void*));
             return vector;
         }
     }
 
 err:
-    while((*argc)--)
-        sdsfree(vector[*argc]);
-    s_free(vector);
-    if (current) sdsfree(current);
+    if (orbit) {
+        while((*argc)--)
+            sdsfree_orbit(vector[*argc]);
+        orbit_pool_free(slowlog_pool, vector);
+        if (current) sdsfree_orbit(current);
+    } else {
+        while((*argc)--)
+            sdsfree(vector[*argc]);
+        s_free(vector);
+        if (current) sdsfree(current);
+    }
     *argc = 0;
     return NULL;
 }
+sds *sdssplitargs(const char *line, int *argc) {
+    return sdssplitargs_real(line, argc, false);
+}
+sds *sdssplitargs_orbit(const char *line, int *argc) {
+    return sdssplitargs_real(line, argc, true);
+}
+
 
 /* Modify the string substituting all the occurrences of the set of
  * characters specified in the 'from' string to the corresponding character

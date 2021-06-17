@@ -32,6 +32,9 @@
 #include <sys/uio.h>
 #include <math.h>
 #include <ctype.h>
+#include "orbit.h"
+
+extern struct orbit_pool *slowlog_pool;
 
 static void setProtocolError(const char *errstr, client *c, long pos);
 
@@ -78,7 +81,8 @@ void linkClient(client *c) {
 }
 
 client *createClient(int fd) {
-    client *c = zmalloc(sizeof(client));
+    fprintf(stderr, "sizeof client is %lu\n", sizeof(client));
+    client *c = orbit_pool_alloc(slowlog_pool, sizeof(client));
 
     /* passing -1 as fd it is possible to create a non connected client.
      * This is useful since all the commands needs to be executed
@@ -93,7 +97,7 @@ client *createClient(int fd) {
             readQueryFromClient, c) == AE_ERR)
         {
             close(fd);
-            zfree(c);
+            orbit_pool_free(slowlog_pool, c);
             return NULL;
         }
     }
@@ -881,10 +885,11 @@ void freeClient(client *c) {
     /* Release other dynamically allocated client structure fields,
      * and finally release the client structure itself. */
     if (c->name) decrRefCount(c->name);
-    zfree(c->argv);
+    /* FIXME: zfree(c->argv); */
+    orbit_pool_free(slowlog_pool, c->argv);
     freeClientMultiState(c);
-    sdsfree(c->peerid);
-    zfree(c);
+    sdsfree_orbit(c->peerid);
+    orbit_pool_free(slowlog_pool, c);
 }
 
 /* Schedule a client to free it at a safe time in the serverCron() function.
@@ -1106,13 +1111,14 @@ int processInlineBuffer(client *c) {
     /* Split the input buffer up to the \r\n */
     querylen = newline-(c->querybuf);
     aux = sdsnewlen(c->querybuf,querylen);
-    argv = sdssplitargs(aux,&argc);
+    argv = sdssplitargs_orbit(aux,&argc);
     sdsfree(aux);
     if (argv == NULL) {
         addReplyError(c,"Protocol error: unbalanced quotes in request");
         setProtocolError("unbalanced quotes in inline request",c,0);
         return C_ERR;
     }
+    fprintf(stderr, "is inline buf\n");
 
     /* Newline from slaves can be used to refresh the last ACK time.
      * This is useful for a slave to ping back while loading a big
@@ -1125,20 +1131,20 @@ int processInlineBuffer(client *c) {
 
     /* Setup argv array on client structure */
     if (argc) {
-        if (c->argv) zfree(c->argv);
-        c->argv = zmalloc(sizeof(robj*)*argc);
+        if (c->argv) orbit_pool_free(slowlog_pool, c->argv);
+        c->argv = orbit_pool_alloc(slowlog_pool, sizeof(robj*)*argc);
     }
 
     /* Create redis objects for all arguments. */
     for (c->argc = 0, j = 0; j < argc; j++) {
         if (sdslen(argv[j])) {
-            c->argv[c->argc] = createObject(OBJ_STRING,argv[j]);
+            c->argv[c->argc] = createObject_orbit(OBJ_STRING,argv[j]);
             c->argc++;
         } else {
-            sdsfree(argv[j]);
+            sdsfree_orbit(argv[j]);
         }
     }
-    zfree(argv);
+    orbit_pool_free(slowlog_pool, argv);
     return C_OK;
 }
 
@@ -1227,8 +1233,8 @@ int processMultibulkBuffer(client *c) {
         c->multibulklen = ll;
 
         /* Setup argv array on client structure */
-        if (c->argv) zfree(c->argv);
-        c->argv = zmalloc(sizeof(robj*)*c->multibulklen);
+        if (c->argv) orbit_pool_free(slowlog_pool, c->argv);
+        c->argv = orbit_pool_alloc(slowlog_pool, sizeof(robj*)*c->multibulklen);
     }
 
     serverAssertWithInfo(c,NULL,c->multibulklen > 0);
@@ -1296,7 +1302,7 @@ int processMultibulkBuffer(client *c) {
                 c->bulklen >= PROTO_MBULK_BIG_ARG &&
                 sdslen(c->querybuf) == (size_t)(c->bulklen+2))
             {
-                c->argv[c->argc++] = createObject(OBJ_STRING,c->querybuf);
+                c->argv[c->argc++] = createObject_orbit(OBJ_STRING,c->querybuf);
                 sdsIncrLen(c->querybuf,-2); /* remove CRLF */
                 /* Assume that if we saw a fat argument we'll see another one
                  * likely... */
@@ -1305,7 +1311,7 @@ int processMultibulkBuffer(client *c) {
                 pos = 0;
             } else {
                 c->argv[c->argc++] =
-                    createStringObject(c->querybuf+pos,c->bulklen);
+                    createStringObject_orbit(c->querybuf+pos,c->bulklen);
                 pos += c->bulklen+2;
             }
             c->bulklen = -1;
@@ -1518,7 +1524,7 @@ char *getClientPeerId(client *c) {
 
     if (c->peerid == NULL) {
         genClientPeerId(c,peerid,sizeof(peerid));
-        c->peerid = sdsnew(peerid);
+        c->peerid = sdsnew_orbit(peerid);
     }
     return c->peerid;
 }
@@ -1786,6 +1792,7 @@ void rewriteClientCommandVector(client *c, int argc, ...) {
      * sure that if the same objects are reused in the new vector the
      * refcount gets incremented before it gets decremented. */
     for (j = 0; j < c->argc; j++) decrRefCount(c->argv[j]);
+    /* FIXME: argv source */
     zfree(c->argv);
     /* Replace argv and argc with our new versions. */
     c->argv = argv;
@@ -1798,6 +1805,7 @@ void rewriteClientCommandVector(client *c, int argc, ...) {
 /* Completely replace the client command vector with the provided one. */
 void replaceClientCommandVector(client *c, int argc, robj **argv) {
     freeClientArgv(c);
+    /* FIXME: argv source */
     zfree(c->argv);
     c->argv = argv;
     c->argc = argc;

@@ -215,12 +215,18 @@ static inline void sdssetalloc(sds s, size_t newlen) {
 }
 
 sds sdsnewlen(const void *init, size_t initlen);
+sds sdsnewlen_orbit(const void *init, size_t initlen);
 sds sdsnew(const char *init);
+sds sdsnew_orbit(const char *init);
 sds sdsempty(void);
+sds sdsempty_orbit(void);
 sds sdsdup(const sds s);
+sds sdsdup_orbit(const sds s);
 void sdsfree(sds s);
+void sdsfree_orbit(sds s);
 sds sdsgrowzero(sds s, size_t len);
 sds sdscatlen(sds s, const void *t, size_t len);
+sds sdscatlen_orbit(sds s, const void *t, size_t len);
 sds sdscat(sds s, const char *t);
 sds sdscatsds(sds s, const sds t);
 sds sdscpylen(sds s, const char *t, size_t len);
@@ -247,12 +253,14 @@ void sdstoupper(sds s);
 sds sdsfromlonglong(long long value);
 sds sdscatrepr(sds s, const char *p, size_t len);
 sds *sdssplitargs(const char *line, int *argc);
+sds *sdssplitargs_orbit(const char *line, int *argc);
 sds sdsmapchars(sds s, const char *from, const char *to, size_t setlen);
 sds sdsjoin(char **argv, int argc, char *sep);
 sds sdsjoinsds(sds *argv, int argc, const char *sep, size_t seplen);
 
 /* Low level functions exposed to the user API */
 sds sdsMakeRoomFor(sds s, size_t addlen);
+sds sdsMakeRoomFor_orbit(sds s, size_t addlen);
 void sdsIncrLen(sds s, ssize_t incr);
 sds sdsRemoveFreeSpace(sds s);
 size_t sdsAllocSize(sds s);

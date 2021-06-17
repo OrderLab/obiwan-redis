@@ -2172,7 +2172,7 @@ void replicationCacheMaster(client *c) {
 
     /* Invalidate the Peer ID cache. */
     if (c->peerid) {
-        sdsfree(c->peerid);
+        sdsfree_orbit(c->peerid);
         c->peerid = NULL;
     }
 

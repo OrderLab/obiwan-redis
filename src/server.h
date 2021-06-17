@@ -583,7 +583,8 @@ typedef struct RedisModuleDigest {
 
 #define OBJ_SHARED_REFCOUNT INT_MAX
 typedef struct redisObject {
-    unsigned type:4;
+    unsigned type:3;
+    unsigned orbit:1;
     unsigned encoding:4;
     unsigned lru:LRU_BITS; /* LRU time (relative to global lru_clock) or
                             * LFU data (least significant 8 bits frequency
@@ -599,6 +600,7 @@ typedef struct redisObject {
 #define initStaticStringObject(_var,_ptr) do { \
     _var.refcount = 1; \
     _var.type = OBJ_STRING; \
+    _var.orbit = 0; \
     _var.encoding = OBJ_ENCODING_RAW; \
     _var.ptr = _ptr; \
 } while(0)
@@ -1447,10 +1449,15 @@ void freeSetObject(robj *o);
 void freeZsetObject(robj *o);
 void freeHashObject(robj *o);
 robj *createObject(int type, void *ptr);
+robj *createObject_orbit(int type, void *ptr);
 robj *createStringObject(const char *ptr, size_t len);
+robj *createStringObject_orbit(const char *ptr, size_t len);
 robj *createRawStringObject(const char *ptr, size_t len);
+robj *createRawStringObject_orbit(const char *ptr, size_t len);
 robj *createEmbeddedStringObject(const char *ptr, size_t len);
+robj *createEmbeddedStringObject_orbit(const char *ptr, size_t len);
 robj *dupStringObject(const robj *o);
+robj *dupStringObject_orbit(const robj *o);
 int isSdsRepresentableAsLongLong(sds s, long long *llval);
 int isObjectRepresentableAsLongLong(robj *o, long long *llongval);
 robj *tryObjectEncoding(robj *o);
@@ -1471,6 +1478,7 @@ int checkType(client *c, robj *o, int type);
 int getLongLongFromObjectOrReply(client *c, robj *o, long long *target, const char *msg);
 int getDoubleFromObjectOrReply(client *c, robj *o, double *target, const char *msg);
 int getDoubleFromObject(const robj *o, double *target);
+int getLongFromObject(robj *o, long *target);
 int getLongLongFromObject(robj *o, long long *target);
 int getLongDoubleFromObject(robj *o, long double *target);
 int getLongDoubleFromObjectOrReply(client *c, robj *o, long double *target, const char *msg);

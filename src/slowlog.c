@@ -113,8 +113,10 @@ void slowlogFreeEntry(void *septr) {
 }
 
 struct orbit_module *slowlog_orbit;
+struct orbit_pool *slowlog_pool, *slowlog_scratch_pool;
 /* Fix linking */
-extern struct orbit_pool *slowlog_pool;
+extern struct orbit_allocator *slowlog_alloc;
+
 struct orbit_scratch slowlog_scratch;
 unsigned long slowlogPushEntry_orbit(void *store, void *args);
 
@@ -129,7 +131,12 @@ void *slowlogInit_orbit(void) {
  * at server startup. */
 void slowlogInit(void) {
     slowlog_pool = orbit_pool_create_at(1024 * 1024, (void*)0x820000000UL);
-    orbit_scratch_create(&slowlog_scratch, 1024 * 1024);
+    slowlog_alloc = orbit_allocator_from_pool(slowlog_pool, true);
+
+    slowlog_scratch_pool = orbit_pool_create_at(1024 * 1024, (void*)0x810000000UL);
+    slowlog_scratch_pool->mode = ORBIT_MOVE;
+    orbit_scratch_set_pool(slowlog_scratch_pool);
+
     slowlog_orbit = orbit_create("slowlog", slowlogPushEntry_orbit, slowlogInit_orbit);
 }
 
@@ -170,7 +177,7 @@ void slowlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long durati
 
     // slowlogPushEntryIfNeededReal(c, argv, argc, duration);
     slowlog_push_orbit_args args = { c, argv, argc, duration, };
-    // orbit_call_async(slowlog_orbit, ORBIT_NORETVAL, 1, &slowlog_pool, &args, sizeof(args), NULL);
+    // orbit_call_async(slowlog_orbit, ORBIT_NORETVAL, 1, &slowlog_alloc, &args, sizeof(args), NULL);
     orbit_call_async(slowlog_orbit, ORBIT_NORETVAL, 1, &slowlog_pool, NULL, &args, sizeof(args), NULL);
 }
 
@@ -193,14 +200,14 @@ unsigned long slowlogCommand_orbit(void *store, void *_args) {
 
     fprintf(stderr, "In slowlog query\n");
 
-    orbit_scratch_create(&slowlog_scratch, 1024 * 1024);
+    orbit_scratch_create(&slowlog_scratch);
 
-    slowlog_pool = orbit_pool_from_scratch(&slowlog_scratch);
+    slowlog_alloc = orbit_scratch_open_any(&slowlog_scratch, true);
 
     if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"reset")) {
         slowlogReset();
     } else if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"len")) {
-        long long *len = orbit_pool_alloc(slowlog_pool, sizeof(long long));
+        long long *len = orbit_alloc(slowlog_alloc, sizeof(long long));
         *len = listLength(server.slowlog);
         ret = (unsigned long)len;
     } else if ((c->argc == 2 || c->argc == 3) &&
@@ -223,10 +230,10 @@ unsigned long slowlogCommand_orbit(void *store, void *_args) {
             int j;
 
             se = ln->value;
-            se_dup = orbit_pool_alloc(slowlog_pool, sizeof(*se_dup));
+            se_dup = orbit_alloc(slowlog_alloc, sizeof(*se_dup));
 
             *se_dup = *se;
-            se_dup->argv = orbit_pool_alloc(slowlog_pool, sizeof(robj*)*se->argc);
+            se_dup->argv = orbit_alloc(slowlog_alloc, sizeof(robj*)*se->argc);
             for (j = 0; j < se->argc; j++)
                 se_dup->argv[j] = dupStringObject_orbit(se->argv[j]);
             se_dup->peerid = sdsdup_orbit(se->peerid);
@@ -241,8 +248,8 @@ unsigned long slowlogCommand_orbit(void *store, void *_args) {
     }
 
 exit:
-    orbit_pool_conclude_scratch(&slowlog_scratch, slowlog_pool);
-
+    /* Send query result. Open "any" will automatically be closed. */
+    /* TODO: use specialized query API */
     orbit_sendv(&slowlog_scratch);
 
     return ret;

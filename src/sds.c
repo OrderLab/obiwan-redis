@@ -40,7 +40,7 @@
 #include "sdsalloc.h"
 #include "orbit.h"
 
-extern struct orbit_pool *slowlog_pool;
+extern struct orbit_allocator *slowlog_alloc;
 
 static inline int sdsHdrSize(char type) {
     switch(type&SDS_TYPE_MASK) {
@@ -95,7 +95,7 @@ sds sdsnewlen_real(const void *init, size_t initlen, bool orbit) {
     unsigned char *fp; /* flags pointer. */
 
     if (orbit)
-        sh = orbit_pool_alloc(slowlog_pool, hdrlen+initlen+1);
+        sh = orbit_alloc(slowlog_alloc, hdrlen+initlen+1);
     else
         sh = s_malloc(hdrlen+initlen+1);
     if (!init)
@@ -183,7 +183,7 @@ void sdsfree(sds s) {
 }
 void sdsfree_orbit(sds s) {
     if (s == NULL) return;
-    orbit_pool_free(slowlog_pool, (char*)s-sdsHdrSize(s[-1]));
+    orbit_free(slowlog_alloc, (char*)s-sdsHdrSize(s[-1]));
 }
 
 /* Set the sds string length to the length as obtained with strlen(), so
@@ -248,7 +248,7 @@ sds sdsMakeRoomFor_real(sds s, size_t addlen, bool orbit) {
     hdrlen = sdsHdrSize(type);
     if (oldtype==type) {
         if (orbit)
-            newsh = orbit_pool_realloc(slowlog_pool, sh, hdrlen+newlen+1);
+            newsh = orbit_realloc(slowlog_alloc, sh, hdrlen+newlen+1);
         else
             newsh = s_realloc(sh, hdrlen+newlen+1);
         if (newsh == NULL) return NULL;
@@ -257,13 +257,13 @@ sds sdsMakeRoomFor_real(sds s, size_t addlen, bool orbit) {
         /* Since the header size changes, need to move the string forward,
          * and can't use realloc */
         if (orbit)
-            newsh = orbit_pool_alloc(slowlog_pool, hdrlen+newlen+1);
+            newsh = orbit_alloc(slowlog_alloc, hdrlen+newlen+1);
         else
             newsh = s_malloc(hdrlen+newlen+1);
         if (newsh == NULL) return NULL;
         memcpy((char*)newsh+hdrlen, s, len+1);
         if (orbit)
-            orbit_pool_free(slowlog_pool, sh);
+            orbit_free(slowlog_alloc, sh);
         else
             s_free(sh);
         s = (char*)newsh+hdrlen;
@@ -1089,7 +1089,7 @@ sds *sdssplitargs_real(const char *line, int *argc, bool orbit) {
             }
             /* add the token to the vector */
             size_t size = ((*argc)+1)*sizeof(char*);
-            vector = orbit ? orbit_pool_realloc(slowlog_pool, vector, size)
+            vector = orbit ? orbit_realloc(slowlog_alloc, vector, size)
                            : s_realloc(vector,size);
             vector[*argc] = current;
             (*argc)++;
@@ -1097,7 +1097,7 @@ sds *sdssplitargs_real(const char *line, int *argc, bool orbit) {
         } else {
             /* Even on empty input string return something not NULL. */
             if (vector == NULL)
-                vector = orbit ? orbit_pool_alloc(slowlog_pool, sizeof(void*))
+                vector = orbit ? orbit_alloc(slowlog_alloc, sizeof(void*))
                                : s_malloc(sizeof(void*));
             return vector;
         }
@@ -1107,7 +1107,7 @@ err:
     if (orbit) {
         while((*argc)--)
             sdsfree_orbit(vector[*argc]);
-        orbit_pool_free(slowlog_pool, vector);
+        orbit_free(slowlog_alloc, vector);
         if (current) sdsfree_orbit(current);
     } else {
         while((*argc)--)

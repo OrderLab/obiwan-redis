@@ -34,7 +34,7 @@
 #include <ctype.h>
 #include "orbit.h"
 
-extern struct orbit_pool *slowlog_pool;
+extern struct orbit_allocator *slowlog_alloc;
 
 static void setProtocolError(const char *errstr, client *c, long pos);
 
@@ -82,7 +82,7 @@ void linkClient(client *c) {
 
 client *createClient(int fd) {
     fprintf(stderr, "sizeof client is %lu\n", sizeof(client));
-    client *c = orbit_pool_alloc(slowlog_pool, sizeof(client));
+    client *c = orbit_alloc(slowlog_alloc, sizeof(client));
 
     /* passing -1 as fd it is possible to create a non connected client.
      * This is useful since all the commands needs to be executed
@@ -97,7 +97,7 @@ client *createClient(int fd) {
             readQueryFromClient, c) == AE_ERR)
         {
             close(fd);
-            orbit_pool_free(slowlog_pool, c);
+            orbit_free(slowlog_alloc, c);
             return NULL;
         }
     }
@@ -886,10 +886,10 @@ void freeClient(client *c) {
      * and finally release the client structure itself. */
     if (c->name) decrRefCount(c->name);
     /* FIXME: zfree(c->argv); */
-    orbit_pool_free(slowlog_pool, c->argv);
+    orbit_free(slowlog_alloc, c->argv);
     freeClientMultiState(c);
     sdsfree_orbit(c->peerid);
-    orbit_pool_free(slowlog_pool, c);
+    orbit_free(slowlog_alloc, c);
 }
 
 /* Schedule a client to free it at a safe time in the serverCron() function.
@@ -1131,8 +1131,8 @@ int processInlineBuffer(client *c) {
 
     /* Setup argv array on client structure */
     if (argc) {
-        if (c->argv) orbit_pool_free(slowlog_pool, c->argv);
-        c->argv = orbit_pool_alloc(slowlog_pool, sizeof(robj*)*argc);
+        if (c->argv) orbit_free(slowlog_alloc, c->argv);
+        c->argv = orbit_alloc(slowlog_alloc, sizeof(robj*)*argc);
     }
 
     /* Create redis objects for all arguments. */
@@ -1144,7 +1144,7 @@ int processInlineBuffer(client *c) {
             sdsfree_orbit(argv[j]);
         }
     }
-    orbit_pool_free(slowlog_pool, argv);
+    orbit_free(slowlog_alloc, argv);
     return C_OK;
 }
 
@@ -1233,8 +1233,8 @@ int processMultibulkBuffer(client *c) {
         c->multibulklen = ll;
 
         /* Setup argv array on client structure */
-        if (c->argv) orbit_pool_free(slowlog_pool, c->argv);
-        c->argv = orbit_pool_alloc(slowlog_pool, sizeof(robj*)*c->multibulklen);
+        if (c->argv) orbit_free(slowlog_alloc, c->argv);
+        c->argv = orbit_alloc(slowlog_alloc, sizeof(robj*)*c->multibulklen);
     }
 
     serverAssertWithInfo(c,NULL,c->multibulklen > 0);

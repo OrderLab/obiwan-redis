@@ -3753,7 +3753,7 @@ int main(int argc, char **argv) {
     dictSetHashFunctionSeed((uint8_t*)hashseed);
     server.sentinel_mode = checkForSentinelMode(argc,argv);
     initServerConfig();
-    // init slowlog_pool before createClient(-1);
+    // init slowlog_alloc before createClient(-1);
     slowlogInit();
     moduleInitModulesSystem();
 

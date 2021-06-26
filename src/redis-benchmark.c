@@ -624,9 +624,19 @@ int showThroughput(struct aeEventLoop *eventLoop, long long id, void *clientData
         fflush(stdout);
 	return 250;
     }
-    float dt = (float)(mstime()-config.start)/1000.0;
-    float rps = (float)config.requests_finished/dt;
-    printf("%s: %.2f\r", config.title, rps);
+    static long long last_t;
+    static int last_finished = 0;
+    static int inited = 0;
+    if (!inited) {
+        inited = 1;
+        last_t = config.start;
+    }
+    long long this_time = mstime();
+    float dt = (float)(this_time-last_t)/1000.0;
+    float rps = (float)(config.requests_finished-last_finished)/dt;
+    last_finished = config.requests_finished;
+    last_t = this_time;
+    printf("%s: %.2f\n", config.title, rps);
     fflush(stdout);
     return 250; /* every 250ms */
 }

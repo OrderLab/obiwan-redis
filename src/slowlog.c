@@ -142,10 +142,30 @@ void *slowlogInit_orbit(void) {
     return NULL;
 }
 
+static long long tot_time = 0, cnt = 0;
+static long long cmd_tot_time = 0;
+
+int showThroughput(struct aeEventLoop *eventLoop, long long id, void *clientData) {
+    UNUSED(eventLoop);
+    UNUSED(id);
+    UNUSED(clientData);
+
+    static bool last_zero = false;
+    if (!last_zero) {
+        printf("SLOG: %lu\nOCALL: %lld\n", slowlog_pool->used, cnt ? tot_time / cnt : -1);
+        printf("CMD: %lld\n", cnt ? cmd_tot_time / cnt : -1);
+    }
+    if (cnt == 0) last_zero = true;
+    tot_time = cnt = 0;
+    cmd_tot_time = 0;
+    fflush(stdout);
+    return 250; /* every 250ms */
+}
+
 /* Initialize the slow log. This function should be called a single time
  * at server startup. */
 void slowlogInit(void) {
-    slowlog_pool = orbit_pool_create_at(1024 * 1024, (void*)0x820000000UL);
+    slowlog_pool = orbit_pool_create_at(64 * 1024 * 1024, (void*)0x820000000UL);
     slowlog_alloc = orbit_allocator_from_pool(slowlog_pool, true);
 
     slowlog_scratch_pool = orbit_pool_create_at(1024 * 1024, (void*)0x810000000UL);
@@ -179,7 +199,7 @@ unsigned long slowlogPushEntry_orbit(void *store, void *_args) {
     return 0;
 }
 
-void slowlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long duration) {
+void slowlogPushEntryIfNeeded_inner(client *c, robj **argv, int argc, long long duration) {
     if (server.slowlog_log_slower_than < 0) return; /* Slowlog disabled */
     /* FIXME: this changes default behavior that trims slowlog entires every time */
     if (!(duration >= server.slowlog_log_slower_than)) return;
@@ -193,6 +213,20 @@ void slowlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long durati
     // slowlogPushEntryIfNeededReal(c, argv, argc, duration);
     slowlog_push_orbit_args args = { c, argv, argc, duration, };
     orbit_call_async(slowlog_orbit, ORBIT_NORETVAL, 1, &slowlog_pool, NULL, &args, sizeof(args), NULL);
+}
+
+void slowlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long duration) {
+    static int inited = 0;
+    if (!inited) {
+        inited = 1;
+        aeCreateTimeEvent(server.el,1,showThroughput,NULL,NULL);
+    }
+
+    long long start = ustime();
+    slowlogPushEntryIfNeeded_inner(c, argv, argc, duration);
+    tot_time += ustime() - start;
+    cmd_tot_time += duration * 1000;
+    ++cnt;
 }
 
 /* Remove all the entries from the current slow log. */

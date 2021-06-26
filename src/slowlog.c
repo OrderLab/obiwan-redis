@@ -44,6 +44,21 @@
 #include "orbit.h"
 #include <assert.h>
 
+#undef DEBUG_ORBIT
+
+#ifdef DEBUG_ORBIT
+#define printd(fmt, ...)                        \
+    do {                                        \
+        fprintf(stderr, fmt, ##__VA_ARGS__);    \
+    } while (0)
+#else
+#define printd(fmt, ...) do {} while (0)
+#endif
+
+#define whatis(x) printd(#x " is %lu\n", (unsigned long)(x))
+#define whatisp(x) printd(#x " is %p\n", (void*)(x))
+
+
 /* Create a new slowlog entry.
  * Incrementing the ref count of all the objects retained is up to
  * this function. */
@@ -64,8 +79,8 @@ slowlogEntry *slowlogCreateEntry(client *c, robj **argv, int argc, long long dur
                 argc-slargc+1));
         } else {
             /* Trim too long strings as well... */
-            fprintf(stderr, "argv %p\n", argv);
-            fprintf(stderr, "argv[j] %p\n", argv[j]);
+            whatisp(argv);
+            whatisp(argv[j]);
             if (argv[j]->type == OBJ_STRING &&
                 sdsEncodedObject(argv[j]) &&
                 sdslen(argv[j]->ptr) > SLOWLOG_ENTRY_MAX_STRING)
@@ -78,7 +93,7 @@ slowlogEntry *slowlogCreateEntry(client *c, robj **argv, int argc, long long dur
                 se->argv[j] = createObject(OBJ_STRING,s);
             } else if (argv[j]->refcount == OBJ_SHARED_REFCOUNT) {
                 /* how will we have those? */
-                fprintf(stderr, "Getting shared obj\n");
+                printd("Getting shared obj\n");
                 se->argv[j] = argv[j];
             } else {
                 /* Copy string object out of orbit pool.
@@ -169,7 +184,7 @@ void slowlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long durati
     /* FIXME: this changes default behavior that trims slowlog entires every time */
     if (!(duration >= server.slowlog_log_slower_than)) return;
 
-    fprintf(stderr, "In slowlog push\n");
+    printd("In slowlog push\n");
 
     // pre-get c->peerid
     // can this be put into orbit?
@@ -177,7 +192,6 @@ void slowlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long durati
 
     // slowlogPushEntryIfNeededReal(c, argv, argc, duration);
     slowlog_push_orbit_args args = { c, argv, argc, duration, };
-    // orbit_call_async(slowlog_orbit, ORBIT_NORETVAL, 1, &slowlog_alloc, &args, sizeof(args), NULL);
     orbit_call_async(slowlog_orbit, ORBIT_NORETVAL, 1, &slowlog_pool, NULL, &args, sizeof(args), NULL);
 }
 
@@ -198,7 +212,7 @@ unsigned long slowlogCommand_orbit(void *store, void *_args) {
 
     unsigned long ret = 0;
 
-    fprintf(stderr, "In slowlog query\n");
+    printd("In slowlog query\n");
 
     orbit_scratch_create(&slowlog_scratch);
 
@@ -268,21 +282,24 @@ void slowlogCommand(client *c) {
                      &args, sizeof(args), &task);
 
     ret = orbit_recvv(&result, &task);
-    fprintf(stderr, "orbit_recvv returns %d\n", ret);
+    printd("orbit_recvv returns %d\n", ret);
     assert(ret == 1);
 
     ret = orbit_recvv(&retval, &task);
-    fprintf(stderr, "orbit_recvv returns %d\n", ret);
+    printd("orbit_recvv returns %d\n", ret);
     assert(ret == 0);
 
     if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"reset")) {
         addReply(c,shared.ok);
     } else if (c->argc == 2 && !strcasecmp(c->argv[1]->ptr,"len")) {
         struct orbit_repr *len = orbit_scratch_first(&result.scratch);
-        fprintf(stderr, "len->type %d len->any.length %llu\n", len->type, len->any.length);
+
+        whatis(len->type); whatis(len->any.length);
+
         assert(len && len->type == ORBIT_ANY);
         addReplyLongLong(c,*(long long*)retval.retval);
-        fprintf(stderr, "retval %llx %llx\n", retval.retval, len->any.data + 8);
+
+        whatisp(retval.retval); whatisp(len->any.data + 8);
     } else if ((c->argc == 2 || c->argc == 3) &&
                !strcasecmp(c->argv[1]->ptr,"get"))
     {
@@ -299,7 +316,7 @@ void slowlogCommand(client *c) {
         struct orbit_repr *slowlog_r = orbit_scratch_first(&result.scratch);
         assert(slowlog_r->type == ORBIT_ANY);
         list *slowlog = (list*)retval.retval;
-        fprintf(stderr, "retval %llx %llx\n", retval.retval, slowlog_r->any.data + 8);
+        whatisp(retval.retval); whatisp(slowlog_r->any.data + 8);
 
         listRewind(slowlog,&li);
         totentries = addDeferredMultiBulkLength(c);

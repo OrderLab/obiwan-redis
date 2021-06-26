@@ -81,7 +81,6 @@ void linkClient(client *c) {
 }
 
 client *createClient(int fd) {
-    fprintf(stderr, "sizeof client is %lu\n", sizeof(client));
     client *c = orbit_alloc(slowlog_alloc, sizeof(client));
 
     /* passing -1 as fd it is possible to create a non connected client.
@@ -1118,7 +1117,6 @@ int processInlineBuffer(client *c) {
         setProtocolError("unbalanced quotes in inline request",c,0);
         return C_ERR;
     }
-    fprintf(stderr, "is inline buf\n");
 
     /* Newline from slaves can be used to refresh the last ACK time.
      * This is useful for a slave to ping back while loading a big

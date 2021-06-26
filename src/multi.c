@@ -140,8 +140,6 @@ void execCommand(client *c) {
         goto handle_monitor;
     }
 
-    fprintf(stderr, "is multi command\n");
-
     /* Exec all the queued commands */
     unwatchAllKeys(c); /* Unwatch ASAP otherwise we'll waste CPU cycles */
     orig_argv = c->argv;

@@ -142,8 +142,9 @@ void *slowlogInit_orbit(void) {
     return NULL;
 }
 
-static long long tot_time = 0, cnt = 0;
+static long long call_tot_time = 0, cnt = 0;
 static long long cmd_tot_time = 0;
+long long query_tot_time = 0;
 
 int showThroughput(struct aeEventLoop *eventLoop, long long id, void *clientData) {
     UNUSED(eventLoop);
@@ -151,13 +152,15 @@ int showThroughput(struct aeEventLoop *eventLoop, long long id, void *clientData
     UNUSED(clientData);
 
     static bool last_zero = false;
-    if (!last_zero) {
-        printf("SLOG: %lu\nOCALL: %lld\n", slowlog_pool->used, cnt ? tot_time / cnt : -1);
-        printf("CMD: %lld\n", cnt ? cmd_tot_time / cnt : -1);
+    if (!last_zero || cnt != 0) {
+        printf("POOL: %lu\nOCALL: %f\n", slowlog_pool->used, cnt ? (double)call_tot_time / cnt : -1);
+        printf("CMD: %f\n", cnt ? (double)cmd_tot_time / cnt : -1);
+        printf("QUERY: %f\n", cnt ? (double)query_tot_time / cnt : -1);
     }
-    if (cnt == 0) last_zero = true;
-    tot_time = cnt = 0;
+    last_zero = (cnt == 0);
+    call_tot_time = cnt = 0;
     cmd_tot_time = 0;
+    query_tot_time = 0;
     fflush(stdout);
     return 250; /* every 250ms */
 }
@@ -224,8 +227,8 @@ void slowlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long durati
 
     long long start = ustime();
     slowlogPushEntryIfNeeded_inner(c, argv, argc, duration);
-    tot_time += ustime() - start;
-    cmd_tot_time += duration * 1000;
+    call_tot_time += ustime() - start;
+    cmd_tot_time += duration;
     ++cnt;
 }
 

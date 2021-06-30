@@ -1392,12 +1392,16 @@ void processInputBuffer(client *c) {
     server.current_client = NULL;
 }
 
+extern long long query_tot_time;
+
 void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
     client *c = (client*) privdata;
     int nread, readlen;
     size_t qblen;
     UNUSED(el);
     UNUSED(mask);
+
+    long long start = ustime();
 
     readlen = PROTO_IOBUF_LEN;
     /* If this is a multi bulk request, and we are processing a bulk reply
@@ -1471,6 +1475,7 @@ void readQueryFromClient(aeEventLoop *el, int fd, void *privdata, int mask) {
             sdsrange(c->pending_querybuf,applied,-1);
         }
     }
+    query_tot_time += ustime() - start;
 }
 
 void getClientsMaxBuffers(unsigned long *longest_output_list,

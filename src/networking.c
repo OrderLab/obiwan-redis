@@ -81,7 +81,11 @@ void linkClient(client *c) {
 }
 
 client *createClient(int fd) {
-    client *c = orbit_alloc(slowlog_alloc, sizeof(client));
+    /* FIXME: bitmap allocator does not support larger-than page allocation,
+     * thus currently we use zmalloc, though this will make us to only run
+     * slowlog once. */
+    // client *c = orbit_alloc(slowlog_alloc, sizeof(client));
+    client *c = zmalloc(sizeof(client));
 
     /* passing -1 as fd it is possible to create a non connected client.
      * This is useful since all the commands needs to be executed

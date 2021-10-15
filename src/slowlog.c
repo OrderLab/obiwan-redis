@@ -105,8 +105,11 @@ slowlogEntry *slowlogCreateEntry(client *c, robj **argv, int argc, long long dur
     se->time = time(NULL);
     se->duration = duration;
     se->id = server.slowlog_entry_id++;
-    se->peerid = sdsnew(c->peerid);
-    se->cname = c->name ? sdsnew(c->name->ptr) : sdsempty();
+    /* FIXME: see networking.c */
+    // se->peerid = sdsnew(c->peerid);
+    // se->cname = c->name ? sdsnew(c->name->ptr) : sdsempty();
+    se->peerid = sdsempty();
+    se->cname = sdsempty();
     return se;
 }
 
@@ -153,7 +156,7 @@ int showThroughput(struct aeEventLoop *eventLoop, long long id, void *clientData
 
     static bool last_zero = false;
     if (!last_zero || cnt != 0) {
-        printf("POOL: %lu\nOCALL: %f\n", slowlog_pool->used, cnt ? (double)call_tot_time / cnt : -1);
+        printf("POOL: %lu\nOCALL: %f\n", slowlog_pool->data_length, cnt ? (double)call_tot_time / cnt : -1);
         printf("CMD: %f\n", cnt ? (double)cmd_tot_time / cnt : -1);
         printf("QUERY: %f\n", cnt ? (double)query_tot_time / cnt : -1);
     }

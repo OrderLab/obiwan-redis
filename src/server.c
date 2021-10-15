@@ -56,6 +56,9 @@
 #include <locale.h>
 #include <sys/socket.h>
 
+#include "orbit.h"
+extern struct orbit_allocator *slowlog_alloc;
+
 /* Our shared "common" objects */
 
 struct sharedObjectsStruct shared;
@@ -1049,7 +1052,15 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         int statloc;
         pid_t pid;
 
-        if ((pid = wait3(&statloc,WNOHANG,NULL)) != 0) {
+        if (server.rdb_child_pid != -1) {
+            union orbit_result result;
+            int ret;
+
+            ret = orbit_recvv(&result, &server.rdb_child_task);
+            assert(ret == 0);
+            backgroundSaveDoneHandler((result.retval == C_OK) ? 0 : 1, 0);
+            if (result.retval == C_OK) receiveChildInfo();
+        } else if ((pid = wait3(&statloc,WNOHANG,NULL)) != 0) {
             int exitcode = WEXITSTATUS(statloc);
             int bysignal = 0;
 
@@ -1850,7 +1861,7 @@ void initServer(void) {
             strerror(errno));
         exit(1);
     }
-    server.db = zmalloc(sizeof(redisDb)*server.dbnum);
+    server.db = orbit_alloc(slowlog_alloc, sizeof(redisDb)*server.dbnum);
 
     /* Open the TCP listening socket for the user commands. */
     if (server.port != 0 &&
@@ -1877,8 +1888,8 @@ void initServer(void) {
 
     /* Create the Redis databases, and initialize other internal state. */
     for (j = 0; j < server.dbnum; j++) {
-        server.db[j].dict = dictCreate(&dbDictType,NULL);
-        server.db[j].expires = dictCreate(&keyptrDictType,NULL);
+        server.db[j].dict = dictCreate_orbit(&dbDictType,NULL);
+        server.db[j].expires = dictCreate_orbit(&keyptrDictType,NULL);
         server.db[j].blocking_keys = dictCreate(&keylistDictType,NULL);
         server.db[j].ready_keys = dictCreate(&objectKeyPointerValueDictType,NULL);
         server.db[j].watched_keys = dictCreate(&keylistDictType,NULL);

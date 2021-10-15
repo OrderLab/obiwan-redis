@@ -40,6 +40,13 @@
 #include <arpa/inet.h>
 #include <sys/stat.h>
 #include <sys/param.h>
+#include <assert.h>
+
+#include "orbit.h"
+struct orbit_module *rdb_orbit;
+// We will reuse the slowlog pool
+extern struct orbit_pool *slowlog_pool;
+extern struct orbit_allocator *slowlog_alloc;
 
 #define rdbExitReportCorruptRDB(...) rdbCheckThenExit(__LINE__,__VA_ARGS__)
 
@@ -1059,17 +1066,65 @@ werr:
     return C_ERR;
 }
 
+struct rdbSave_args {
+    char *filename;
+    int r;
+    rdbSaveInfo rdata;
+};
+
+unsigned long rdbSave_orbit(void *store, void *argbuf) {
+    int retval;
+    struct rdbSave_args *args = (struct rdbSave_args*)argbuf;
+
+    /* Child */
+    closeListeningSockets(0);
+    redisSetProcTitle("redis-rdb-bgsave");
+    retval = rdbSave(args->filename, args->r ? &args->rdata : NULL);
+    if (retval == C_OK) {
+        size_t private_dirty = zmalloc_get_private_dirty(-1);
+
+        if (private_dirty) {
+            serverLog(LL_NOTICE,
+                "RDB: %zu MB of memory used by copy-on-write",
+                private_dirty/(1024*1024));
+        }
+
+        server.child_info_data.cow_size = private_dirty;
+        sendChildInfo(CHILD_INFO_TYPE_RDB);
+    }
+    return retval;
+}
+
 int rdbSaveBackground(char *filename, rdbSaveInfo *rsi) {
     pid_t childpid;
     long long start;
+    int ret;
 
     if (server.aof_child_pid != -1 || server.rdb_child_pid != -1) return C_ERR;
 
     server.dirty_before_bgsave = server.dirty;
     server.lastbgsave_try = time(NULL);
-    openChildInfoPipe();
+
+    static bool inited = false;
+    if (!inited) {
+        openChildInfoPipe();
+        rdb_orbit = orbit_create("rdb save", rdbSave_orbit, NULL);
+        inited = true;
+    }
 
     start = ustime();
+
+    struct rdbSave_args args;
+    args.filename = filename;
+    args.r = !!rsi;
+    if (rsi) args.rdata = *rsi;
+
+    ret = orbit_call_async(rdb_orbit, 0, 1, &slowlog_pool, NULL, &args, sizeof(args), &server.rdb_child_task);
+    assert(ret == 0);
+
+    childpid = rdb_orbit->gobid;
+
+#if 0
     if ((childpid = fork()) == 0) {
         int retval;
 
@@ -1091,10 +1146,13 @@ int rdbSaveBackground(char *filename, rdbSaveInfo *rsi) {
         }
         exitFromChild((retval == C_OK) ? 0 : 1);
     } else {
+#endif
         /* Parent */
         server.stat_fork_time = ustime()-start;
         server.stat_fork_rate = (double) zmalloc_used_memory() * 1000000 / server.stat_fork_time / (1024*1024*1024); /* GB per second. */
         latencyAddSampleIfNeeded("fork",server.stat_fork_time/1000);
+        fprintf(stderr, "RDBT: %lld us\n", server.stat_fork_time);
+        fprintf(stderr, "RDBM: %lu byte\n", *slowlog_alloc->allocated);
         if (childpid == -1) {
             closeChildInfoPipe();
             server.lastbgsave_status = C_ERR;
@@ -1108,8 +1166,10 @@ int rdbSaveBackground(char *filename, rdbSaveInfo *rsi) {
         server.rdb_child_type = RDB_CHILD_TYPE_DISK;
         updateDictResizePolicy();
         return C_OK;
+#if 0
     }
     return C_OK; /* unreached */
+#endif
 }
 
 void rdbRemoveTempFile(pid_t childpid) {

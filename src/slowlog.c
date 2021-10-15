@@ -180,6 +180,7 @@ unsigned long slowlogPushEntry_orbit(void *store, void *_args) {
 }
 
 void slowlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long duration) {
+    return;
     if (server.slowlog_log_slower_than < 0) return; /* Slowlog disabled */
     /* FIXME: this changes default behavior that trims slowlog entires every time */
     if (!(duration >= server.slowlog_log_slower_than)) return;

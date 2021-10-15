@@ -79,6 +79,7 @@ typedef struct dict {
     dictht ht[2];
     long rehashidx; /* rehashing not in progress if rehashidx == -1 */
     unsigned long iterators; /* number of iterators currently running */
+    int orbit;
 } dict;
 
 /* If safe is set to 1 this is a safe iterator, that means, you can call
@@ -149,6 +150,7 @@ typedef void (dictScanBucketFunction)(void *privdata, dictEntry **bucketref);
 
 /* API */
 dict *dictCreate(dictType *type, void *privDataPtr);
+dict *dictCreate_orbit(dictType *type, void *privDataPtr);
 int dictExpand(dict *d, unsigned long size);
 int dictAdd(dict *d, void *key, void *val);
 dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing);

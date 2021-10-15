@@ -51,6 +51,9 @@
 #include <assert.h>
 #endif
 
+#include "orbit.h"
+extern struct orbit_allocator *slowlog_alloc;
+
 /* Using dictEnableResize() / dictDisableResize() we make possible to
  * enable/disable resizing of the hash table as needed. This is very important
  * for Redis, as we use copy-on-write and don't want to move too much memory
@@ -114,6 +117,17 @@ dict *dictCreate(dictType *type,
     dict *d = zmalloc(sizeof(*d));
 
     _dictInit(d,type,privDataPtr);
+    d->orbit = 0;
+    return d;
+}
+
+dict *dictCreate_orbit(dictType *type,
+        void *privDataPtr)
+{
+    dict *d = orbit_alloc(slowlog_alloc, sizeof(*d));
+
+    _dictInit(d,type,privDataPtr);
+    d->orbit = 1;
     return d;
 }
 
@@ -160,7 +174,8 @@ int dictExpand(dict *d, unsigned long size)
     /* Allocate the new hash table and initialize all pointers to NULL */
     n.size = realsize;
     n.sizemask = realsize-1;
-    n.table = zcalloc(realsize*sizeof(dictEntry*));
+    n.table = d->orbit ? orbit_calloc(slowlog_alloc, realsize*sizeof(dictEntry*))
+                       : zcalloc(realsize*sizeof(dictEntry*));
     n.used = 0;
 
     /* Is this the first initialization? If so it's not really a rehashing
@@ -219,7 +234,8 @@ int dictRehash(dict *d, int n) {
 
     /* Check if we already rehashed the whole table... */
     if (d->ht[0].used == 0) {
-        zfree(d->ht[0].table);
+        d->orbit ? orbit_free(slowlog_alloc, d->ht[0].table)
+                 : zfree(d->ht[0].table);
         d->ht[0] = d->ht[1];
         _dictReset(&d->ht[1]);
         d->rehashidx = -1;
@@ -307,7 +323,8 @@ dictEntry *dictAddRaw(dict *d, void *key, dictEntry **existing)
      * system it is more likely that recently added entries are accessed
      * more frequently. */
     ht = dictIsRehashing(d) ? &d->ht[1] : &d->ht[0];
-    entry = zmalloc(sizeof(*entry));
+    entry = d->orbit ? orbit_alloc(slowlog_alloc, sizeof(*entry))
+                     : zmalloc(sizeof(*entry));
     entry->next = ht->table[index];
     ht->table[index] = entry;
     ht->used++;
@@ -385,7 +402,7 @@ static dictEntry *dictGenericDelete(dict *d, const void *key, int nofree) {
                 if (!nofree) {
                     dictFreeKey(d, he);
                     dictFreeVal(d, he);
-                    zfree(he);
+                    d->orbit ? orbit_free(slowlog_alloc, he) : zfree(he);
                 }
                 d->ht[table].used--;
                 return he;
@@ -435,7 +452,7 @@ void dictFreeUnlinkedEntry(dict *d, dictEntry *he) {
     if (he == NULL) return;
     dictFreeKey(d, he);
     dictFreeVal(d, he);
-    zfree(he);
+    d->orbit ? orbit_free(slowlog_alloc, he) : zfree(he);
 }
 
 /* Destroy an entire dictionary */
@@ -453,13 +470,13 @@ int _dictClear(dict *d, dictht *ht, void(callback)(void *)) {
             nextHe = he->next;
             dictFreeKey(d, he);
             dictFreeVal(d, he);
-            zfree(he);
+            d->orbit ? orbit_free(slowlog_alloc, he) : zfree(he);
             ht->used--;
             he = nextHe;
         }
     }
     /* Free the table and the allocated cache structure */
-    zfree(ht->table);
+    d->orbit ? orbit_free(slowlog_alloc, ht->table) : zfree(ht->table);
     /* Re-initialize the table */
     _dictReset(ht);
     return DICT_OK; /* never fails */
@@ -470,7 +487,7 @@ void dictRelease(dict *d)
 {
     _dictClear(d,&d->ht[0],NULL);
     _dictClear(d,&d->ht[1],NULL);
-    zfree(d);
+    d->orbit ? orbit_free(slowlog_alloc, d) : zfree(d);
 }
 
 dictEntry *dictFind(dict *d, const void *key)

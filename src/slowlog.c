@@ -168,10 +168,10 @@ int showThroughput(struct aeEventLoop *eventLoop, long long id, void *clientData
 /* Initialize the slow log. This function should be called a single time
  * at server startup. */
 void slowlogInit(void) {
-    slowlog_pool = orbit_pool_create_at(64 * 1024 * 1024, (void*)0x820000000UL);
+    slowlog_pool = orbit_pool_create_at(NULL, 256 * 1024 * 1024, (void*)0x820000000UL);
     slowlog_alloc = orbit_allocator_from_pool(slowlog_pool, true);
 
-    slowlog_scratch_pool = orbit_pool_create_at(1024 * 1024, (void*)0x810000000UL);
+    slowlog_scratch_pool = orbit_pool_create_at(NULL, 1024 * 1024, (void*)0x810000000UL);
     slowlog_scratch_pool->mode = ORBIT_MOVE;
     orbit_scratch_set_pool(slowlog_scratch_pool);
 

@@ -1079,6 +1079,7 @@ struct rdbSave_args {
     int r;
     rdbSaveInfo rdata;
     size_t pool_used;
+    bool inject;
 };
 
 unsigned long rdbSave_orbit(void *store, void *argbuf) {
@@ -1086,11 +1087,13 @@ unsigned long rdbSave_orbit(void *store, void *argbuf) {
     int retval;
     struct rdbSave_args *args = (struct rdbSave_args*)argbuf;
 
-    dump_mem(slowlog_pool->rawptr, args->pool_used, "/tmp/slowlog_orbit.bin");
+    dump_mem(slowlog_pool->data_start, args->pool_used, "/tmp/slowlog_orbit.bin");
 
     /* Child */
     closeListeningSockets(0);
     redisSetProcTitle("redis-rdb-bgsave");
+    if (args->inject)
+        args->inject = *(bool*)NULL;
     retval = rdbSave(args->filename, args->r ? &args->rdata : NULL);
     if (retval == C_OK) {
         size_t private_dirty = zmalloc_get_private_dirty(-1);
@@ -1127,7 +1130,7 @@ void *rdb_wait_loop(void *aux) {
         pthread_mutex_unlock(&rdb_mutex);
 
         int ret = orbit_recvv(&result, &task);
-        serverAssert(ret == 0);
+        if (ret < 0) result.retval = C_ERR;
 
         pthread_mutex_lock(&rdb_mutex);
 
@@ -1152,75 +1155,54 @@ int rdbSaveBackground(char *filename, rdbSaveInfo *rsi) {
         openChildInfoPipe();
         rdb_orbit = orbit_create("rdb save", rdbSave_orbit, NULL);
         pthread_create(&rdb_wait_thread, NULL, rdb_wait_loop, NULL);
+    } else if (rdb_orbit && orbit_gone(rdb_orbit)) {
+        fprintf(stderr, "orbit: RDB process is gone, spawn a new one\n");
+        rdb_orbit = orbit_create("rdb save", rdbSave_orbit, NULL);
     }
+    static bool do_inject = false;
+    static int inject_counter = 0;
 
     start = ustime();
 
-    struct rdbSave_args args;
-    args.filename = filename;
-    args.r = !!rsi;
-    args.pool_used = slowlog_pool->data_length;
+    struct rdbSave_args args = {
+        .filename = filename,
+        .r = !!rsi,
+        .pool_used = slowlog_pool->data_length,
+        .inject = (do_inject && ++inject_counter % 3 == 0),
+    };
     if (rsi) args.rdata = *rsi;
 
-    dump_mem(slowlog_pool->rawptr, slowlog_pool->data_length, "/tmp/slowlog_main.bin");
+    dump_mem(slowlog_pool->data_start, slowlog_pool->data_length, "/tmp/slowlog_main.bin");
 
     ret = orbit_call_async(rdb_orbit, 0, 1, &slowlog_pool, NULL, &args, sizeof(args),
                            &server.rdb_child_task);
-    serverAssert(ret == 0);
 
     childpid = rdb_orbit->gobid;
 
-#if 0
-    if ((childpid = fork()) == 0) {
-        int retval;
-
-        /* Child */
-        closeListeningSockets(0);
-        redisSetProcTitle("redis-rdb-bgsave");
-        retval = rdbSave(filename,rsi);
-        if (retval == C_OK) {
-            size_t private_dirty = zmalloc_get_private_dirty(-1);
-
-            if (private_dirty) {
-                serverLog(LL_NOTICE,
-                    "RDB: %zu MB of memory used by copy-on-write",
-                    private_dirty/(1024*1024));
-            }
-
-            server.child_info_data.cow_size = private_dirty;
-            sendChildInfo(CHILD_INFO_TYPE_RDB);
-        }
-        exitFromChild((retval == C_OK) ? 0 : 1);
-    } else {
-#endif
-        /* Parent */
-        server.stat_fork_time = ustime()-start;
-        server.stat_fork_rate = (double) zmalloc_used_memory() * 1000000 / server.stat_fork_time / (1024*1024*1024); /* GB per second. */
-        latencyAddSampleIfNeeded("fork",server.stat_fork_time/1000);
-        fprintf(stderr, "RDBT: %lld us\n", server.stat_fork_time);
-        //fprintf(stderr, "RDBM: %lu byte\n", *slowlog_alloc->allocated);
-        fprintf(stderr, "RDBM: %lu byte\n", slowlog_pool->data_length);
-        if (childpid == -1) {
-            closeChildInfoPipe();
-            server.lastbgsave_status = C_ERR;
-            serverLog(LL_WARNING,"Can't save in background: fork: %s",
-                strerror(errno));
-            return C_ERR;
-        }
-        serverLog(LL_NOTICE,"Background saving started by pid %d",childpid);
-        pthread_mutex_lock(&rdb_mutex);
-        server.rdb_save_time_start = time(NULL);
-        server.rdb_child_pid = childpid;
-        server.rdb_child_type = RDB_CHILD_TYPE_DISK;
-        updateDictResizePolicy();
-        pthread_mutex_unlock(&rdb_mutex);
-        pthread_cond_signal(&rdb_cond);
-        //pthread_mutex_unlock(&rdb_mutex);
-        return C_OK;
-#if 0
+    /* Parent */
+    server.stat_fork_time = ustime()-start;
+    server.stat_fork_rate = (double) zmalloc_used_memory() * 1000000 / server.stat_fork_time / (1024*1024*1024); /* GB per second. */
+    latencyAddSampleIfNeeded("fork",server.stat_fork_time/1000);
+    fprintf(stderr, "RDBT: %lld us\n", server.stat_fork_time);
+    //fprintf(stderr, "RDBM: %lu byte\n", *slowlog_alloc->allocated);
+    fprintf(stderr, "RDBM: %lu byte\n", slowlog_pool->data_length);
+    if (ret == -1) {
+        //closeChildInfoPipe();
+        server.lastbgsave_status = C_ERR;
+        serverLog(LL_WARNING,"Can't save in background: fork: %s",
+            strerror(errno));
+        return C_ERR;
     }
-    return C_OK; /* unreached */
-#endif
+    serverLog(LL_NOTICE,"Background saving started by pid %d",childpid);
+    pthread_mutex_lock(&rdb_mutex);
+    server.rdb_save_time_start = time(NULL);
+    server.rdb_child_pid = childpid;
+    server.rdb_child_type = RDB_CHILD_TYPE_DISK;
+    updateDictResizePolicy();
+    pthread_mutex_unlock(&rdb_mutex);
+    pthread_cond_signal(&rdb_cond);
+    //pthread_mutex_unlock(&rdb_mutex);
+    return C_OK;
 }
 
 void rdbRemoveTempFile(pid_t childpid) {

@@ -176,10 +176,16 @@ sds sdsdup_orbit(const sds s) {
     return sdsnewlen_orbit(s, sdslen(s));
 }
 
+extern struct orbit_pool *slowlog_pool;
+
 /* Free an sds string. No operation is performed if 's' is NULL. */
 void sdsfree(sds s) {
     if (s == NULL) return;
-    s_free((char*)s-sdsHdrSize(s[-1]));
+    if (slowlog_pool && (char*)slowlog_pool->data_start <= s &&
+        s < (char*)slowlog_pool->data_start + slowlog_pool->data_length)
+        orbit_free(slowlog_alloc, (char*)s-sdsHdrSize(s[-1]));
+    else
+        s_free((char*)s-sdsHdrSize(s[-1]));
 }
 void sdsfree_orbit(sds s) {
     if (s == NULL) return;

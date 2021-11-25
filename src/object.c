@@ -140,6 +140,7 @@ robj *createEmbeddedStringObject_orbit(const char *ptr, size_t len) {
  * we allocate as EMBSTR will still fit into the 64 byte arena of jemalloc. */
 #define OBJ_ENCODING_EMBSTR_SIZE_LIMIT 44
 robj *createStringObject(const char *ptr, size_t len) {
+	return createStringObject_orbit(ptr, len);
     if (len <= OBJ_ENCODING_EMBSTR_SIZE_LIMIT)
         return createEmbeddedStringObject(ptr,len);
     else
@@ -265,6 +266,13 @@ robj *createHashObject(void) {
     return o;
 }
 
+robj *createHashObject_orbit(void) {
+    unsigned char *zl = ziplistNew();
+    robj *o = createObject_orbit(OBJ_HASH, zl);
+    o->encoding = OBJ_ENCODING_ZIPLIST;
+    return o;
+}
+
 robj *createZsetObject(void) {
     zset *zs = zmalloc(sizeof(*zs));
     robj *o;
@@ -327,7 +335,8 @@ void freeZsetObject(robj *o) {
         zfree(zs);
         break;
     case OBJ_ENCODING_ZIPLIST:
-        zfree(o->ptr);
+        orbit_free(slowlog_alloc, o->ptr);
+        /* zfree(o->ptr); */
         break;
     default:
         serverPanic("Unknown sorted set encoding");
@@ -340,7 +349,8 @@ void freeHashObject(robj *o) {
         dictRelease((dict*) o->ptr);
         break;
     case OBJ_ENCODING_ZIPLIST:
-        zfree(o->ptr);
+        orbit_free(slowlog_alloc, o->ptr);
+        /* zfree(o->ptr); */
         break;
     default:
         serverPanic("Unknown hash encoding type");
@@ -430,6 +440,8 @@ robj *tryObjectEncoding(robj *o) {
     long value;
     sds s = o->ptr;
     size_t len;
+
+    return o;
 
     /* Make sure this is a string object, the only type we encode
      * in this function. Other types use encoded memory efficient

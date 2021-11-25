@@ -190,6 +190,14 @@
 #include "endianconv.h"
 #include "redisassert.h"
 
+#include "orbit.h"
+
+extern struct orbit_allocator *slowlog_alloc;
+
+#define zmalloc(size) orbit_alloc(slowlog_alloc, size)
+#define zfree(ptr) orbit_free(slowlog_alloc, ptr)
+#define zrealloc(ptr, newsize) orbit_realloc(slowlog_alloc, ptr, newsize)
+
 #define ZIP_END 255         /* Special "end of ziplist" entry. */
 #define ZIP_BIG_PREVLEN 254 /* Max number of bytes of the previous entry, for
                                the "prevlen" field prefixing each entry, to be

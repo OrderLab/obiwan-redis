@@ -145,14 +145,18 @@ void *slowlogInit_orbit(void) {
 /* Initialize the slow log. This function should be called a single time
  * at server startup. */
 void slowlogInit(void) {
-    slowlog_pool = orbit_pool_create_at(NULL, 256 * 1024 * 1024, (void*)0x820000000UL);
+    slowlog_pool = orbit_pool_create(NULL, 2UL * 0x40000000UL);
+    //slowlog_pool = orbit_pool_create_at(NULL, 2UL * 0x40000000UL, (void*)(0x820UL * 0x40000000UL));
+    fprintf(stderr, "slowlog pool at %p\n", slowlog_pool->rawptr);
     slowlog_alloc = orbit_allocator_from_pool(slowlog_pool, true);
 
-    slowlog_scratch_pool = orbit_pool_create_at(NULL, 1024 * 1024, (void*)0x810000000UL);
+    slowlog_scratch_pool = orbit_pool_create(NULL, 0x40000000UL);
+    // slowlog_scratch_pool = orbit_pool_create_at(NULL, 0x40000000UL, (void*)(0x830UL * 0x40000000UL));
+    fprintf(stderr, "scratch pool at %p\n", slowlog_scratch_pool->rawptr);
     slowlog_scratch_pool->mode = ORBIT_MOVE;
     orbit_scratch_set_pool(slowlog_scratch_pool);
 
-    slowlog_orbit = orbit_create("slowlog", slowlogPushEntry_orbit, slowlogInit_orbit);
+    // slowlog_orbit = orbit_create("slowlog", slowlogPushEntry_orbit, slowlogInit_orbit);
 }
 
 /* Push a new entry into the slow log.
@@ -180,6 +184,7 @@ unsigned long slowlogPushEntry_orbit(void *store, void *_args) {
 }
 
 void slowlogPushEntryIfNeeded(client *c, robj **argv, int argc, long long duration) {
+    // fprintf(stderr, "pool size is 0x%lx\n", slowlog_pool->used);
     return;
     if (server.slowlog_log_slower_than < 0) return; /* Slowlog disabled */
     /* FIXME: this changes default behavior that trims slowlog entires every time */

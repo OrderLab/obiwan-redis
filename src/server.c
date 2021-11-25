@@ -482,6 +482,13 @@ void dictSdsDestructor(void *privdata, void *val)
     sdsfree(val);
 }
 
+void dictSdsDestructor_orbit(void *privdata, void *val)
+{
+    DICT_NOTUSED(privdata);
+
+    sdsfree_orbit(val);
+}
+
 int dictObjKeyCompare(void *privdata, const void *key1,
         const void *key2)
 {
@@ -580,8 +587,8 @@ dictType dbDictType = {
     NULL,                       /* key dup */
     NULL,                       /* val dup */
     dictSdsKeyCompare,          /* key compare */
-    dictSdsDestructor,          /* key destructor */
-    dictObjectDestructor   /* val destructor */
+    dictSdsDestructor_orbit,    /* key destructor */
+    dictObjectDestructor        /* val destructor */
 };
 
 /* server.lua_scripts sha (as sds string) -> scripts (as robj) cache. */
@@ -622,6 +629,15 @@ dictType hashDictType = {
     dictSdsKeyCompare,          /* key compare */
     dictSdsDestructor,          /* key destructor */
     dictSdsDestructor           /* val destructor */
+};
+
+dictType hashDictType_orbit = {
+    dictSdsHash,                /* hash function */
+    NULL,                       /* key dup */
+    NULL,                       /* val dup */
+    dictSdsKeyCompare,          /* key compare */
+    dictSdsDestructor_orbit,    /* key destructor */
+    dictSdsDestructor_orbit     /* val destructor */
 };
 
 /* Keylist hash table type has unencoded redis objects as keys and
@@ -1052,14 +1068,12 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
         int statloc;
         pid_t pid;
 
-        if (server.rdb_child_pid != -1) {
-            union orbit_result result;
-            int ret;
+        extern pthread_mutex_t rdb_mutex;
 
-            ret = orbit_recvv(&result, &server.rdb_child_task);
-            assert(ret == 0);
-            backgroundSaveDoneHandler((result.retval == C_OK) ? 0 : 1, 0);
-            if (result.retval == C_OK) receiveChildInfo();
+        pthread_mutex_lock(&rdb_mutex);
+
+        if (server.rdb_child_pid != -1) {
+            // this is handled by rdb_wait_loop
         } else if ((pid = wait3(&statloc,WNOHANG,NULL)) != 0) {
             int exitcode = WEXITSTATUS(statloc);
             int bysignal = 0;
@@ -1088,6 +1102,7 @@ int serverCron(struct aeEventLoop *eventLoop, long long id, void *clientData) {
             updateDictResizePolicy();
             closeChildInfoPipe();
         }
+        pthread_mutex_unlock(&rdb_mutex);
     } else {
         /* If there is not a background saving/rewrite in progress check if
          * we have to save/rewrite now. */

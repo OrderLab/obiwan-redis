@@ -239,12 +239,12 @@ int hashTypeSet(robj *o, sds field, sds value, int flags) {
     } else if (o->encoding == OBJ_ENCODING_HT) {
         dictEntry *de = dictFind(o->ptr,field);
         if (de) {
-            sdsfree(dictGetVal(de));
+            sdsfree_orbit(dictGetVal(de));
             if (flags & HASH_SET_TAKE_VALUE) {
                 dictGetVal(de) = value;
                 value = NULL;
             } else {
-                dictGetVal(de) = sdsdup(value);
+                dictGetVal(de) = sdsdup_orbit(value);
             }
             update = 1;
         } else {
@@ -253,13 +253,13 @@ int hashTypeSet(robj *o, sds field, sds value, int flags) {
                 f = field;
                 field = NULL;
             } else {
-                f = sdsdup(field);
+                f = sdsdup_orbit(field);
             }
             if (flags & HASH_SET_TAKE_VALUE) {
                 v = value;
                 value = NULL;
             } else {
-                v = sdsdup(value);
+                v = sdsdup_orbit(value);
             }
             dictAdd(o->ptr,f,v);
         }
@@ -269,8 +269,8 @@ int hashTypeSet(robj *o, sds field, sds value, int flags) {
 
     /* Free SDS strings we did not referenced elsewhere if the flags
      * want this function to be responsible. */
-    if (flags & HASH_SET_TAKE_FIELD && field) sdsfree(field);
-    if (flags & HASH_SET_TAKE_VALUE && value) sdsfree(value);
+    if (flags & HASH_SET_TAKE_FIELD && field) sdsfree_orbit(field);
+    if (flags & HASH_SET_TAKE_VALUE && value) sdsfree_orbit(value);
     return update;
 }
 
@@ -451,7 +451,7 @@ sds hashTypeCurrentObjectNewSds(hashTypeIterator *hi, int what) {
 robj *hashTypeLookupWriteOrCreate(client *c, robj *key) {
     robj *o = lookupKeyWrite(c->db,key);
     if (o == NULL) {
-        o = createHashObject();
+        o = createHashObject_orbit();
         dbAdd(c->db,key,o);
     } else {
         if (o->type != OBJ_HASH) {
@@ -498,6 +498,8 @@ void hashTypeConvertZiplist(robj *o, int enc) {
 }
 
 void hashTypeConvert(robj *o, int enc) {
+    fprintf(stderr, "orbit: hash table overflow!\n");
+    abort();
     if (o->encoding == OBJ_ENCODING_ZIPLIST) {
         hashTypeConvertZiplist(o, enc);
     } else if (o->encoding == OBJ_ENCODING_HT) {

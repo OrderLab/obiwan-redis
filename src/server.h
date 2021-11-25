@@ -1308,6 +1308,7 @@ extern dictType dbDictType;
 extern dictType shaScriptObjectDictType;
 extern double R_Zero, R_PosInf, R_NegInf, R_Nan;
 extern dictType hashDictType;
+extern dictType hashDictType_orbit;
 extern dictType replScriptCacheDictType;
 extern dictType keyptrDictType;
 extern dictType modulesDictType;
@@ -1473,6 +1474,7 @@ robj *createZiplistObject(void);
 robj *createSetObject(void);
 robj *createIntsetObject(void);
 robj *createHashObject(void);
+robj *createHashObject_orbit(void);
 robj *createZsetObject(void);
 robj *createZsetZiplistObject(void);
 robj *createModuleObject(moduleType *mt, void *value);
@@ -1830,6 +1832,7 @@ unsigned long LFUDecrAndReturn(robj *o);
 uint64_t dictSdsHash(const void *key);
 int dictSdsKeyCompare(void *privdata, const void *key1, const void *key2);
 void dictSdsDestructor(void *privdata, void *val);
+void dictSdsDestructor_orbit(void *privdata, void *val);
 
 /* Git SHA1 */
 char *redisGitSHA1(void);

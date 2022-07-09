@@ -65,7 +65,8 @@ endif
 
 FINAL_CFLAGS=$(STD) $(WARN) $(OPT) $(DEBUG) $(CFLAGS) $(REDIS_CFLAGS)
 FINAL_LDFLAGS=$(LDFLAGS) $(REDIS_LDFLAGS) $(DEBUG)
-FINAL_LIBS=-lm -lorbit
+# FINAL_LIBS=-lm -lorbit
+FINAL_LIBS=-lm /usr/lib/liborbit.a
 DEBUG=-g -ggdb
 
 ifeq ($(uname_S),SunOS)

@@ -451,6 +451,9 @@ sds sdscatlen_orbit(sds s, const void *t, size_t len) {
 sds sdscat(sds s, const char *t) {
     return sdscatlen(s, t, strlen(t));
 }
+sds sdscat_orbit(sds s, const char *t) {
+    return sdscatlen_orbit(s, t, strlen(t));
+}
 
 /* Append the specified sds 't' to the existing sds 's'.
  *
@@ -595,6 +598,43 @@ sds sdscatvprintf(sds s, const char *fmt, va_list ap) {
     return t;
 }
 
+sds sdscatvprintf_orbit(sds s, const char *fmt, va_list ap) {
+    va_list cpy;
+    char staticbuf[1024], *buf = staticbuf, *t;
+    size_t buflen = strlen(fmt)*2;
+
+    /* We try to start using a static buffer for speed.
+     * If not possible we revert to heap allocation. */
+    if (buflen > sizeof(staticbuf)) {
+        buf = orbit_alloc(slowlog_alloc, buflen);
+        if (buf == NULL) return NULL;
+    } else {
+        buflen = sizeof(staticbuf);
+    }
+
+    /* Try with buffers two times bigger every time we fail to
+     * fit the string in the current buffer size. */
+    while(1) {
+        buf[buflen-2] = '\0';
+        va_copy(cpy,ap);
+        vsnprintf(buf, buflen, fmt, cpy);
+        va_end(cpy);
+        if (buf[buflen-2] != '\0') {
+            if (buf != staticbuf) orbit_free(slowlog_alloc, buf);
+            buflen *= 2;
+            buf = orbit_alloc(slowlog_alloc, buflen);
+            if (buf == NULL) return NULL;
+            continue;
+        }
+        break;
+    }
+
+    /* Finally concat the obtained string to the SDS string and return it. */
+    t = sdscat_orbit(s, buf);
+    if (buf != staticbuf) orbit_free(slowlog_alloc, buf);
+    return t;
+}
+
 /* Append to the sds string 's' a string obtained using printf-alike format
  * specifier.
  *
@@ -616,6 +656,15 @@ sds sdscatprintf(sds s, const char *fmt, ...) {
     char *t;
     va_start(ap, fmt);
     t = sdscatvprintf(s,fmt,ap);
+    va_end(ap);
+    return t;
+}
+
+sds sdscatprintf_orbit(sds s, const char *fmt, ...) {
+    va_list ap;
+    char *t;
+    va_start(ap, fmt);
+    t = sdscatvprintf_orbit(s,fmt,ap);
     va_end(ap);
     return t;
 }

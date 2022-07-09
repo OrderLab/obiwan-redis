@@ -201,6 +201,21 @@ void listDelNode(list *list, listNode *node)
     list->len--;
 }
 
+void listDelNode_orbit(list *list, listNode *node)
+{
+    if (node->prev)
+        node->prev->next = node->next;
+    else
+        list->head = node->next;
+    if (node->next)
+        node->next->prev = node->prev;
+    else
+        list->tail = node->prev;
+    if (list->free) list->free(node->value);
+    orbit_free(slowlog_alloc, node);
+    list->len--;
+}
+
 /* Returns a list iterator 'iter'. After the initialization every
  * call to listNext() will return the next element of the list.
  *

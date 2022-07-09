@@ -39,10 +39,10 @@
 
 /* ===================== Creation and parsing of objects ==================== */
 
-extern struct orbit_allocator *slowlog_alloc;
+extern struct orbit_area *slowlog_area;
 
 robj *createObject_real(int type, void *ptr, bool orbit) {
-    robj *o = orbit ? orbit_alloc(slowlog_alloc, sizeof(*o))
+    robj *o = orbit ? orbit_alloc(slowlog_area, sizeof(*o))
                     : zmalloc(sizeof(*o));
     o->type = type;
     o->orbit = orbit;
@@ -100,7 +100,7 @@ robj *createEmbeddedStringObject_real(const char *ptr, size_t len, bool orbit) {
     struct sdshdr8 *sh;
     size_t size = sizeof(robj)+sizeof(struct sdshdr8)+len+1;
 
-    o = orbit ? orbit_alloc(slowlog_alloc, size) : zmalloc(size);
+    o = orbit ? orbit_alloc(slowlog_area, size) : zmalloc(size);
     sh = (void*)(o+1);
 
     o->type = OBJ_STRING;
@@ -370,7 +370,7 @@ void decrRefCount(robj *o) {
         default: serverPanic("Unknown object type"); break;
         }
         if (o->orbit)
-            orbit_free(slowlog_alloc, o);
+            orbit_free(slowlog_area, o);
         else
             zfree(o);
     } else {

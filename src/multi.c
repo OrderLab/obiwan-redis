@@ -30,7 +30,7 @@
 #include "server.h"
 #include "orbit.h"
 
-extern struct orbit_allocator *slowlog_alloc;
+extern struct orbit_area *slowlog_area;
 
 /* ================================ MULTI/EXEC ============================== */
 
@@ -50,7 +50,7 @@ void freeClientMultiState(client *c) {
 
         for (i = 0; i < mc->argc; i++)
             decrRefCount(mc->argv[i]);
-        orbit_free(slowlog_alloc, mc->argv);
+        orbit_free(slowlog_area, mc->argv);
     }
     zfree(c->mstate.commands);
 }
@@ -65,7 +65,7 @@ void queueMultiCommand(client *c) {
     mc = c->mstate.commands+c->mstate.count;
     mc->cmd = c->cmd;
     mc->argc = c->argc;
-    mc->argv = orbit_alloc(slowlog_alloc, sizeof(robj*)*c->argc);
+    mc->argv = orbit_alloc(slowlog_area, sizeof(robj*)*c->argc);
     memcpy(mc->argv,c->argv,sizeof(robj*)*c->argc);
     for (j = 0; j < c->argc; j++)
         incrRefCount(mc->argv[j]);

@@ -35,7 +35,7 @@
 #include "orbit.h"
 
 /* FIXME: Fix linking */
-struct orbit_allocator *slowlog_alloc;
+struct orbit_area *slowlog_area;
 
 /* Create a new list. The created list can be freed with
  * AlFreeList(), but private value of every node need to be freed
@@ -46,7 +46,7 @@ list *listCreate_real(bool orbit)
 {
     struct list *list;
 
-    if (orbit && (list = orbit_alloc(slowlog_alloc, sizeof(*list))) == NULL)
+    if (orbit && (list = orbit_alloc(slowlog_area, sizeof(*list))) == NULL)
         return NULL;
     if (!orbit && (list = zmalloc(sizeof(*list))) == NULL)
         return NULL;
@@ -103,7 +103,7 @@ list *listAddNodeHead_real(list *list, void *value, bool orbit)
 {
     listNode *node;
 
-    if (orbit && (node = orbit_alloc(slowlog_alloc, sizeof(*node))) == NULL)
+    if (orbit && (node = orbit_alloc(slowlog_area, sizeof(*node))) == NULL)
         return NULL;
     if (!orbit && (node = zmalloc(sizeof(*node))) == NULL)
         return NULL;
